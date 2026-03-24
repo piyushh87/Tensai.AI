@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+<title id="title">Default avatar</title>
+<desc id="desc">Branded default Tensai.AI avatar placeholder.</desc>
+<defs>
+<linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+<stop offset="0%" stop-color="#ffbf73"/>
+<stop offset="100%" stop-color="#ff7b43"/>
+</linearGradient>
+<linearGradient id="panel" x1="18%" y1="12%" x2="84%" y2="88%">
+<stop offset="0%" stop-color="#2b3140"/>
+<stop offset="100%" stop-color="#171b24"/>
+</linearGradient>
+</defs>
+<rect width="256" height="256" rx="64" fill="#101318"/>
+<circle cx="128" cy="92" r="88" fill="url(#bg)" opacity=".18"/>
+<circle cx="128" cy="132" r="90" fill="none" stroke="#2f3542" stroke-width="2"/>
+<rect x="38" y="38" width="180" height="180" rx="56" fill="url(#panel)" stroke="#3b4354" stroke-width="2"/>
+<path d="M82 104c0-18.778 15.222-34 34-34h24c18.778 0 34 15.222 34 34v4c0 11.046-8.954 20-20 20h-12v46c0 9.941-8.059 18-18 18s-18-8.059-18-18v-46H82z" fill="url(#bg)"/>
+<path d="M86 184c10.667-18.667 25.333-28 44-28s33.333 9.333 44 28" fill="none" stroke="#ffb165" stroke-linecap="round" stroke-width="10"/>
+</svg>
