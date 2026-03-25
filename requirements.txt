@@ -3,3 +3,5 @@ Pillow>=10.0.0
 gunicorn
 mysql-connector-python
 Flask
+Authlib
+requests

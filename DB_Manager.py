@@ -1,20 +1,33 @@
+import os
 import mysql.connector
 from mysql.connector import Error
 import hashlib
 from datetime import datetime
 
 # --- MYSQL CONFIGURATION ---
-DB_CONFIG = {
-    "host": "localhost",
-    "user": "root",
-    "password": "Piyush$8799",  # Ensure this matches your MySQL root password
-    "database": "talent_os"
-}
+def _get_env(name, default=""):
+    return str(os.getenv(name, default)).strip()
+
+
+def _build_db_config():
+    config = {
+        "host": _get_env("DB_HOST", "localhost"),
+        "user": _get_env("DB_USER", "root"),
+        "password": _get_env("DB_PASSWORD", "Piyush$8799"),
+        "database": _get_env("DB_NAME", "talent_os"),
+    }
+    raw_port = _get_env("DB_PORT")
+    if raw_port:
+        try:
+            config["port"] = int(raw_port)
+        except ValueError:
+            print(f"Invalid DB_PORT value: {raw_port!r}")
+    return config
 
 def get_connection():
     """Establishes and returns a connection to the MySQL database."""
     try:
-        conn = mysql.connector.connect(**DB_CONFIG)
+        conn = mysql.connector.connect(**_build_db_config())
         if conn.is_connected():
             return conn
     except Error as e:

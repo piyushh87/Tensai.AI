@@ -2,11 +2,7 @@
 -- TALENT-OS: MySQL Database Initialization Script
 -- ===========================================================================
 
--- 1. Create the database if it doesn't already exist
-CREATE DATABASE IF NOT EXISTS talent_os;
 
--- 2. Select the database to use for the following table creations
-USE talent_os;
 
 -- ===========================================================================
 -- TABLE CREATION
