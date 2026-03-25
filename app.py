@@ -69,12 +69,8 @@ except ImportError as e:
     print(f"Database Module Error: {e}")
     DB_AVAILABLE = False
 
-try:
-    # Added redirect, url_for, and session for Google Login
-    from flask import Flask, request, jsonify, render_template, redirect, url_for, session, Response, stream_with_context
-    FLASK_AVAILABLE = True
-except Exception:
-    FLASK_AVAILABLE = False
+# Added redirect, url_for, and session for Google Login
+from flask import Flask, request, jsonify, render_template, redirect, url_for, session, Response, stream_with_context
 
 # --- NEW: SECURITY & RATE LIMITING MODULES ---
 try:
@@ -423,653 +419,630 @@ def compute_match(jd_raw, resume_text):
     }
 
 
-if FLASK_AVAILABLE:
-    app = Flask(__name__)
+app = Flask(__name__)
+
+# Secret key is required to use Flask sessions securely
+app.secret_key = os.environ.get(
+    "FLASK_SECRET_KEY",
+    "talent_os_super_secret_key_change_in_production",
+)
+
+# --- NEW: RATE LIMITER (Security) ---
+if LIMITER_AVAILABLE:
+    limiter = Limiter(
+        get_remote_address,
+        app=app,
+        default_limits=["200 per day", "50 per hour"],
+        storage_uri="memory://"
+    )
+else:
+    # Dummy limiter if library is missing
+    class DummyLimiter:
+        def limit(self, *args, **kwargs):
+            def decorator(f): return f
+            return decorator
+    limiter = DummyLimiter()
+
+# --- NEW: CUSTOM ERROR CLASS (Architecture) ---
+class APIError(Exception):
+    """Custom Exception Class for precise API Error Handling"""
+    def __init__(self, message, status_code=400):
+        super().__init__()
+        self.message = message
+        self.status_code = status_code
+
+# --- NEW: GLOBAL ERROR HANDLERS ---
+@app.errorhandler(APIError)
+def handle_api_error(error):
+    return jsonify({"success": False, "error": error.message}), error.status_code
+
+@app.errorhandler(404)
+def not_found_error(error):
+    return jsonify({"success": False, "error": "Endpoint not found"}), 404
+
+@app.errorhandler(500)
+def internal_error(error):
+    return jsonify({"success": False, "error": "Internal Server Error"}), 500
+
+
+def build_sse_event(event_name, payload):
+    return f"event: {event_name}\ndata: {json.dumps(payload)}\n\n"
+
+
+# Initialize Google OAuth
+if AUTHLIB_AVAILABLE:
+    # THIS LINE IS CRITICAL FOR LOCAL TESTING - ALLOWS HTTP INSTEAD OF HTTPS
+    os.environ['AUTHLIB_INSECURE_TRANSPORT'] = '1'
     
-    # Secret key is required to use Flask sessions securely
-    app.secret_key = "talent_os_super_secret_key_change_in_production"
+    oauth = OAuth(app)
+    google = oauth.register(
+        name='google',
+        client_id=os.environ.get("GOOGLE_CLIENT_ID"),
+        client_secret=os.environ.get("GOOGLE_CLIENT_SECRET"),
+        server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+        client_kwargs={'scope': 'openid email profile'}
+    )
 
-    # --- NEW: RATE LIMITER (Security) ---
-    if LIMITER_AVAILABLE:
-        limiter = Limiter(
-            get_remote_address,
-            app=app,
-            default_limits=["200 per day", "50 per hour"],
-            storage_uri="memory://"
-        )
-    else:
-        # Dummy limiter if library is missing
-        class DummyLimiter:
-            def limit(self, *args, **kwargs):
-                def decorator(f): return f
-                return decorator
-        limiter = DummyLimiter()
+@app.route('/')
+def home():
+    user = session.get('user')
+    if user:
+        if DB_AVAILABLE and user_uses_google_auth(user):
+            sync_result = upsert_google_user(user)
+            if not sync_result.get('success'):
+                print(f"Existing session sync warning: {sync_result.get('error')}")
+            elif sync_result.get('user'):
+                session['user'] = serialize_platform_user(sync_result.get('user'))
+        session['entry_animation'] = 'returning-user'
+        return redirect(url_for('scanner_app'))
+    return render_template('home.html')
 
-    # --- NEW: CUSTOM ERROR CLASS (Architecture) ---
-    class APIError(Exception):
-        """Custom Exception Class for precise API Error Handling"""
-        def __init__(self, message, status_code=400):
-            super().__init__()
-            self.message = message
-            self.status_code = status_code
-
-    # --- NEW: GLOBAL ERROR HANDLERS ---
-    @app.errorhandler(APIError)
-    def handle_api_error(error):
-        return jsonify({"success": False, "error": error.message}), error.status_code
-
-    @app.errorhandler(404)
-    def not_found_error(error):
-        return jsonify({"success": False, "error": "Endpoint not found"}), 404
-
-    @app.errorhandler(500)
-    def internal_error(error):
-        return jsonify({"success": False, "error": "Internal Server Error"}), 500
-
-
-    def build_sse_event(event_name, payload):
-        return f"event: {event_name}\ndata: {json.dumps(payload)}\n\n"
-
-
-    # Initialize Google OAuth
-    if AUTHLIB_AVAILABLE:
-        # THIS LINE IS CRITICAL FOR LOCAL TESTING - ALLOWS HTTP INSTEAD OF HTTPS
-        os.environ['AUTHLIB_INSECURE_TRANSPORT'] = '1'
-        
-        oauth = OAuth(app)
-        google = oauth.register(
-            name='google',
-            client_id=os.environ.get("GOOGLE_CLIENT_ID"),
-            client_secret=os.environ.get("GOOGLE_CLIENT_SECRET"),
-            server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-            client_kwargs={'scope': 'openid email profile'}
-        )
-
-    @app.route('/')
-    def home():
-        user = session.get('user')
-        if user:
-            if DB_AVAILABLE and user_uses_google_auth(user):
-                sync_result = upsert_google_user(user)
-                if not sync_result.get('success'):
-                    print(f"Existing session sync warning: {sync_result.get('error')}")
-                elif sync_result.get('user'):
-                    session['user'] = serialize_platform_user(sync_result.get('user'))
-            session['entry_animation'] = 'returning-user'
-            return redirect(url_for('scanner_app'))
-        return render_template('home.html')
-
-    # --- GOOGLE LOGIN ROUTE ---
-    @app.route('/login')
-    def login():
-        if session.get('user'):
-            if DB_AVAILABLE and user_uses_google_auth(session.get('user')):
-                sync_result = upsert_google_user(session['user'])
-                if not sync_result.get('success'):
-                    print(f"Session sync warning before redirect: {sync_result.get('error')}")
-                elif sync_result.get('user'):
-                    session['user'] = serialize_platform_user(sync_result.get('user'))
-            session['entry_animation'] = 'returning-user'
-            return redirect(url_for('scanner_app'))
-
-        if AUTHLIB_AVAILABLE:
-            # Tell Google to send the user back to /authorize after logging in
-            redirect_uri = url_for('authorize', _external=True)
-            return google.authorize_redirect(redirect_uri)
-        else:
-            print("Authlib missing! Install it via 'pip install Authlib requests' to enable Google login.")
-            return redirect(url_for('scanner_app')) # Fallback if library is missing
-
-    # --- GOOGLE CALLBACK ROUTE ---
-    @app.route('/authorize')
-    def authorize():
-        if AUTHLIB_AVAILABLE:
-            try:
-                # Fetch the authentication token from Google
-                token = google.authorize_access_token()
-                # Parse the user's profile info (email, name, picture)
-                user_info = token.get('userinfo')
-                if not user_info:
-                    user_info = google.get('userinfo').json()
-                if user_info:
-                    # Save user details in the Flask session
-                    session_user = serialize_google_user(user_info)
-                    session['user'] = session_user
-
-                    sync_result = {"success": False, "is_new_user": False}
-                    if DB_AVAILABLE:
-                        sync_result = upsert_google_user(session_user)
-                        if not sync_result.get('success'):
-                            print(f"Google user sync warning: {sync_result.get('error')}")
-                        elif sync_result.get('user'):
-                            session_user = serialize_platform_user(sync_result.get('user'))
-                            session['user'] = session_user
-
-                    session['entry_animation'] = 'new-user' if sync_result.get('is_new_user') else 'returning-user'
-                    print(f"Logged in successfully as: {session_user.get('email')}")
-            except Exception as e:
-                print(f"Google OAuth Error: {e}")
-                
-        # Redirect into the main application once authentication is done
+# --- GOOGLE LOGIN ROUTE ---
+@app.route('/login')
+def login():
+    if session.get('user'):
+        if DB_AVAILABLE and user_uses_google_auth(session.get('user')):
+            sync_result = upsert_google_user(session['user'])
+            if not sync_result.get('success'):
+                print(f"Session sync warning before redirect: {sync_result.get('error')}")
+            elif sync_result.get('user'):
+                session['user'] = serialize_platform_user(sync_result.get('user'))
+        session['entry_animation'] = 'returning-user'
         return redirect(url_for('scanner_app'))
 
-    @app.route('/logout')
-    def logout():
-        session.pop('user', None)
-        session.pop('entry_animation', None)
-        return redirect(url_for('home'))
+    if AUTHLIB_AVAILABLE:
+        # Tell Google to send the user back to /authorize after logging in
+        redirect_uri = url_for('authorize', _external=True)
+        return google.authorize_redirect(redirect_uri)
+    else:
+        print("Authlib missing! Install it via 'pip install Authlib requests' to enable Google login.")
+        return redirect(url_for('scanner_app')) # Fallback if library is missing
 
-    @app.route('/auth/email/request-otp', methods=['POST'])
-    @limiter.limit("5 per minute")
-    def request_email_signup_otp():
-        if not DB_AVAILABLE:
-            raise APIError("Database is not available for email signup.", 500)
-        if not WERKZEUG_SECURITY_AVAILABLE:
-            raise APIError("Password hashing support is unavailable on this server.", 500)
+# --- GOOGLE CALLBACK ROUTE ---
+@app.route('/authorize')
+def authorize():
+    if AUTHLIB_AVAILABLE:
+        try:
+            # Fetch the authentication token from Google
+            token = google.authorize_access_token()
+            # Parse the user's profile info (email, name, picture)
+            user_info = token.get('userinfo')
+            if not user_info:
+                user_info = google.get('userinfo').json()
+            if user_info:
+                # Save user details in the Flask session
+                session_user = serialize_google_user(user_info)
+                session['user'] = session_user
 
-        data = request.get_json(silent=True) or {}
-        full_name = str(data.get('full_name', '')).strip()
-        email = str(data.get('email', '')).strip().lower()
-        password = str(data.get('password', ''))
+                sync_result = {"success": False, "is_new_user": False}
+                if DB_AVAILABLE:
+                    sync_result = upsert_google_user(session_user)
+                    if not sync_result.get('success'):
+                        print(f"Google user sync warning: {sync_result.get('error')}")
+                    elif sync_result.get('user'):
+                        session_user = serialize_platform_user(sync_result.get('user'))
+                        session['user'] = session_user
 
-        if len(full_name) < 2:
-            raise APIError("Full name must be at least 2 characters long.", 400)
-        if not is_valid_email_address(email):
-            raise APIError("Please enter a valid email address.", 400)
-        if len(password) < 8:
-            raise APIError("Password must be at least 8 characters long.", 400)
+                session['entry_animation'] = 'new-user' if sync_result.get('is_new_user') else 'returning-user'
+                print(f"Logged in successfully as: {session_user.get('email')}")
+        except Exception as e:
+            print(f"Google OAuth Error: {e}")
+            
+    # Redirect into the main application once authentication is done
+    return redirect(url_for('scanner_app'))
 
-        otp_code = generate_otp_code()
-        otp_expires_at = datetime.utcnow() + timedelta(minutes=OTP_EXPIRY_MINUTES)
-        password_hash = generate_password_hash(password)
+@app.route('/logout')
+def logout():
+    session.pop('user', None)
+    session.pop('entry_animation', None)
+    return redirect(url_for('home'))
 
-        signup_result = begin_email_signup(full_name, email, password_hash, otp_code, otp_expires_at)
-        if not signup_result.get('success'):
-            raise APIError(signup_result.get('error') or "Could not start email signup.", 400)
+@app.route('/auth/email/request-otp', methods=['POST'])
+@limiter.limit("5 per minute")
+def request_email_signup_otp():
+    if not DB_AVAILABLE:
+        raise APIError("Database is not available for email signup.", 500)
+    if not WERKZEUG_SECURITY_AVAILABLE:
+        raise APIError("Password hashing support is unavailable on this server.", 500)
 
-        delivery_result = send_signup_otp_email(email, otp_code)
-        if not delivery_result.get('success'):
-            raise APIError(delivery_result.get('error') or "Failed to send OTP email.", 500)
+    data = request.get_json(silent=True) or {}
+    full_name = str(data.get('full_name', '')).strip()
+    email = str(data.get('email', '')).strip().lower()
+    password = str(data.get('password', ''))
 
-        return jsonify({
-            "success": True,
-            "email": email,
-            "message": delivery_result.get('message') or "OTP sent to your email address.",
-            "delivery": delivery_result.get('delivery', 'smtp'),
-            "expires_in_minutes": OTP_EXPIRY_MINUTES
-        })
+    if len(full_name) < 2:
+        raise APIError("Full name must be at least 2 characters long.", 400)
+    if not is_valid_email_address(email):
+        raise APIError("Please enter a valid email address.", 400)
+    if len(password) < 8:
+        raise APIError("Password must be at least 8 characters long.", 400)
 
-    @app.route('/auth/email/verify-otp', methods=['POST'])
-    @limiter.limit("10 per minute")
-    def verify_email_signup():
-        if not DB_AVAILABLE:
-            raise APIError("Database is not available for email signup.", 500)
+    otp_code = generate_otp_code()
+    otp_expires_at = datetime.utcnow() + timedelta(minutes=OTP_EXPIRY_MINUTES)
+    password_hash = generate_password_hash(password)
 
-        data = request.get_json(silent=True) or {}
-        email = str(data.get('email', '')).strip().lower()
-        otp = re.sub(r'\D', '', str(data.get('otp', '')))
+    signup_result = begin_email_signup(full_name, email, password_hash, otp_code, otp_expires_at)
+    if not signup_result.get('success'):
+        raise APIError(signup_result.get('error') or "Could not start email signup.", 400)
 
-        if not is_valid_email_address(email):
-            raise APIError("Please enter a valid email address.", 400)
-        if len(otp) != 6:
-            raise APIError("OTP must be a 6-digit code.", 400)
+    delivery_result = send_signup_otp_email(email, otp_code)
+    if not delivery_result.get('success'):
+        raise APIError(delivery_result.get('error') or "Failed to send OTP email.", 500)
 
-        verification_result = verify_email_signup_otp(email, otp)
-        if not verification_result.get('success'):
-            raise APIError(verification_result.get('error') or "OTP verification failed.", 400)
+    return jsonify({
+        "success": True,
+        "email": email,
+        "message": delivery_result.get('message') or "OTP sent to your email address.",
+        "delivery": delivery_result.get('delivery', 'smtp'),
+        "expires_in_minutes": OTP_EXPIRY_MINUTES
+    })
 
-        session['user'] = serialize_platform_user(verification_result.get('user'))
-        session['entry_animation'] = 'new-user'
+@app.route('/auth/email/verify-otp', methods=['POST'])
+@limiter.limit("10 per minute")
+def verify_email_signup():
+    if not DB_AVAILABLE:
+        raise APIError("Database is not available for email signup.", 500)
 
-        return jsonify({
-            "success": True,
-            "message": "Email verified. Your Tensai.AI workspace is ready.",
-            "redirect": url_for('scanner_app')
-        })
+    data = request.get_json(silent=True) or {}
+    email = str(data.get('email', '')).strip().lower()
+    otp = re.sub(r'\D', '', str(data.get('otp', '')))
 
-    @app.route('/auth/email/login', methods=['POST'])
-    @limiter.limit("10 per minute")
-    def email_login():
-        if not DB_AVAILABLE:
-            raise APIError("Database is not available for email login.", 500)
-        if not WERKZEUG_SECURITY_AVAILABLE:
-            raise APIError("Password hashing support is unavailable on this server.", 500)
+    if not is_valid_email_address(email):
+        raise APIError("Please enter a valid email address.", 400)
+    if len(otp) != 6:
+        raise APIError("OTP must be a 6-digit code.", 400)
 
-        data = request.get_json(silent=True) or {}
-        email = str(data.get('email', '')).strip().lower()
-        password = str(data.get('password', ''))
+    verification_result = verify_email_signup_otp(email, otp)
+    if not verification_result.get('success'):
+        raise APIError(verification_result.get('error') or "OTP verification failed.", 400)
 
-        if not is_valid_email_address(email):
-            raise APIError("Please enter a valid email address.", 400)
-        if not password:
-            raise APIError("Password is required.", 400)
+    session['user'] = serialize_platform_user(verification_result.get('user'))
+    session['entry_animation'] = 'new-user'
 
-        login_result = authenticate_email_user(email, lambda stored_hash: check_password_hash(stored_hash, password))
-        if not login_result.get('success'):
-            raise APIError(login_result.get('error') or "Login failed.", 401)
+    return jsonify({
+        "success": True,
+        "message": "Email verified. Your Tensai.AI workspace is ready.",
+        "redirect": url_for('scanner_app')
+    })
 
-        session['user'] = serialize_platform_user(login_result.get('user'))
-        session['entry_animation'] = 'returning-user'
+@app.route('/auth/email/login', methods=['POST'])
+@limiter.limit("10 per minute")
+def email_login():
+    if not DB_AVAILABLE:
+        raise APIError("Database is not available for email login.", 500)
+    if not WERKZEUG_SECURITY_AVAILABLE:
+        raise APIError("Password hashing support is unavailable on this server.", 500)
 
-        return jsonify({
-            "success": True,
-            "message": "Login successful.",
-            "redirect": url_for('scanner_app')
-        })
+    data = request.get_json(silent=True) or {}
+    email = str(data.get('email', '')).strip().lower()
+    password = str(data.get('password', ''))
 
-    @app.route('/profile/update', methods=['POST'])
-    @limiter.limit("20 per hour")
-    def update_profile():
-        data = request.form.to_dict() if request.form else (request.get_json(silent=True) or {})
-        display_name = normalize_profile_text(data.get('name'), 120)
-        contact_email = normalize_profile_text(data.get('contact_email'), 100, lowercase=True)
-        current_role = normalize_profile_text(data.get('current_role'), 120)
-        target_locations = normalize_profile_text(data.get('target_locations'), 255)
-        primary_stack = normalize_profile_text(data.get('primary_stack'), 255)
-        avatar_file = request.files.get('avatar')
+    if not is_valid_email_address(email):
+        raise APIError("Please enter a valid email address.", 400)
+    if not password:
+        raise APIError("Password is required.", 400)
 
-        if len(display_name) < 2:
-            raise APIError("Display name must be at least 2 characters long.", 400)
-        if contact_email and not is_valid_email_address(contact_email):
-            raise APIError("Professional contact email must be valid.", 400)
-        if current_role and len(current_role) < 2:
-            raise APIError("Current role must be at least 2 characters long.", 400)
+    login_result = authenticate_email_user(email, lambda stored_hash: check_password_hash(stored_hash, password))
+    if not login_result.get('success'):
+        raise APIError(login_result.get('error') or "Login failed.", 401)
 
-        current_user = session.get('user', {}) or {}
-        picture_url = normalize_profile_text(
-            current_user.get('picture') or DEFAULT_PROFILE_AVATAR,
-            255,
+    session['user'] = serialize_platform_user(login_result.get('user'))
+    session['entry_animation'] = 'returning-user'
+
+    return jsonify({
+        "success": True,
+        "message": "Login successful.",
+        "redirect": url_for('scanner_app')
+    })
+
+@app.route('/profile/update', methods=['POST'])
+@limiter.limit("20 per hour")
+def update_profile():
+    data = request.form.to_dict() if request.form else (request.get_json(silent=True) or {})
+    display_name = normalize_profile_text(data.get('name'), 120)
+    contact_email = normalize_profile_text(data.get('contact_email'), 100, lowercase=True)
+    current_role = normalize_profile_text(data.get('current_role'), 120)
+    target_locations = normalize_profile_text(data.get('target_locations'), 255)
+    primary_stack = normalize_profile_text(data.get('primary_stack'), 255)
+    avatar_file = request.files.get('avatar')
+
+    if len(display_name) < 2:
+        raise APIError("Display name must be at least 2 characters long.", 400)
+    if contact_email and not is_valid_email_address(contact_email):
+        raise APIError("Professional contact email must be valid.", 400)
+    if current_role and len(current_role) < 2:
+        raise APIError("Current role must be at least 2 characters long.", 400)
+
+    current_user = session.get('user', {}) or {}
+    picture_url = normalize_profile_text(
+        current_user.get('picture') or DEFAULT_PROFILE_AVATAR,
+        255,
+    )
+
+    legacy_picture_url = normalize_profile_text(data.get('picture'), 255)
+    if avatar_file and getattr(avatar_file, 'filename', ''):
+        picture_url = save_profile_avatar_image(
+            avatar_file,
+            previous_picture_url=current_user.get('picture'),
         )
+    elif legacy_picture_url:
+        if not is_valid_profile_image_url(legacy_picture_url):
+            raise APIError("Avatar URL must start with http:// or https://.", 400)
+        picture_url = legacy_picture_url
 
-        legacy_picture_url = normalize_profile_text(data.get('picture'), 255)
-        if avatar_file and getattr(avatar_file, 'filename', ''):
-            picture_url = save_profile_avatar_image(
-                avatar_file,
-                previous_picture_url=current_user.get('picture'),
-            )
-        elif legacy_picture_url:
-            if not is_valid_profile_image_url(legacy_picture_url):
-                raise APIError("Avatar URL must start with http:// or https://.", 400)
-            picture_url = legacy_picture_url
+    updated_user = build_session_profile_user(current_user, {
+        "name": display_name,
+        "picture": picture_url,
+        "contact_email": contact_email,
+        "current_role": current_role,
+        "target_locations": target_locations,
+        "primary_stack": primary_stack,
+    })
 
-        updated_user = build_session_profile_user(current_user, {
-            "name": display_name,
-            "picture": picture_url,
-            "contact_email": contact_email,
-            "current_role": current_role,
-            "target_locations": target_locations,
-            "primary_stack": primary_stack,
-        })
+    persisted = False
+    storage = 'session'
+    message = "Profile updated."
 
-        persisted = False
-        storage = 'session'
-        message = "Profile updated."
-
-        if DB_AVAILABLE and updated_user.get('email'):
-            update_result = update_platform_user_profile(
-                updated_user.get('email'),
-                updated_user.get('name'),
-                picture_url=updated_user.get('picture'),
-                contact_email=updated_user.get('contact_email'),
-                current_role=updated_user.get('current_role'),
-                target_locations=updated_user.get('target_locations'),
-                primary_stack=updated_user.get('primary_stack'),
-            )
-            if update_result.get('success'):
-                updated_user = serialize_platform_user(update_result.get('user'))
-                persisted = True
-                storage = 'database'
-            else:
-                print(f"Profile update sync warning: {update_result.get('error')}")
-                message = "Profile updated for this session."
-
-        session['user'] = updated_user
-
-        return jsonify({
-            "success": True,
-            "message": message,
-            "persisted": persisted,
-            "storage": storage,
-            "user": updated_user,
-        })
-
-    # --- MAIN APPLICATION ---
-    @app.route('/app')
-    def scanner_app():
-        # Extract user from session and pass it to the index template
-        user = session.get('user', {})
-        entry_animation = session.pop('entry_animation', '')
-        return render_template('index.html', user=user, entry_animation=entry_animation)
-
-    @app.route('/analyze', methods=['POST'])
-    @limiter.limit("10 per minute") # Prevent API abuse
-    def analyze():
-        # --- NEW: INPUT VALIDATION ---
-        jd_raw = request.form.get('jd')
-        if not jd_raw or len(jd_raw.strip()) < 2:
-            raise APIError("Enter at least a short role title or job description.", 400)
-
-        file = request.files.get('resume')
-        resume_text = str(request.form.get('resume_text', '') or '')
-        file_name = str(request.form.get('file_name', '') or '').strip()
-
-        if not file and len(resume_text.strip()) < 40:
-            raise APIError("A resume file or extracted resume text is required.", 400)
-
-        if file:
-            allowed_extensions = {'pdf', 'txt'}
-            if '.' not in file.filename or file.filename.rsplit('.', 1)[1].lower() not in allowed_extensions:
-                raise APIError("Invalid file type. Only PDF and TXT are allowed.", 400)
-            if not file_name:
-                file_name = file.filename
-
-        if len(resume_text.strip()) < 40 and file:
-            if PDFPLUMBER_AVAILABLE and file.filename.lower().endswith('.pdf'):
-                try:
-                    with pdfplumber.open(file) as pdf:
-                        resume_text = " ".join([p.extract_text() for p in pdf.pages if p.extract_text()])
-                except Exception:
-                    raise APIError("Could not read PDF text from the uploaded resume.", 500)
-            else:
-                try:
-                    file.stream.seek(0)
-                    raw = file.stream.read()
-                    resume_text = raw.decode('utf-8', errors='ignore')
-                except Exception:
-                    resume_text = ""
-
-        if len(resume_text.strip()) < 40:
-            raise APIError("The resume text was too short to analyze reliably.", 400)
-
-        if analyze_resume_document:
-            result = analyze_resume_document(jd_raw, resume_text, file_name=file_name)
+    if DB_AVAILABLE and updated_user.get('email'):
+        update_result = update_platform_user_profile(
+            updated_user.get('email'),
+            updated_user.get('name'),
+            picture_url=updated_user.get('picture'),
+            contact_email=updated_user.get('contact_email'),
+            current_role=updated_user.get('current_role'),
+            target_locations=updated_user.get('target_locations'),
+            primary_stack=updated_user.get('primary_stack'),
+        )
+        if update_result.get('success'):
+            updated_user = serialize_platform_user(update_result.get('user'))
+            persisted = True
+            storage = 'database'
         else:
-            result = compute_match(jd_raw, resume_text)
-        return jsonify(result)
+            print(f"Profile update sync warning: {update_result.get('error')}")
+            message = "Profile updated for this session."
 
-    @app.route('/api/ai/chat', methods=['POST'])
-    @limiter.limit("40 per hour")
-    def ai_chat_proxy():
-        if not run_openrouter_chat:
-            raise APIError("AI proxy is unavailable on this server.", 500)
+    session['user'] = updated_user
 
-        data = request.get_json(silent=True) or {}
-        messages = data.get('messages')
-        if not isinstance(messages, list) or not messages:
-            raise APIError("A non-empty messages array is required.", 400)
+    return jsonify({
+        "success": True,
+        "message": message,
+        "persisted": persisted,
+        "storage": storage,
+        "user": updated_user,
+    })
 
-        normalized_messages = []
-        for raw_message in messages[-10:]:
-            if not isinstance(raw_message, dict):
-                continue
-            role = str(raw_message.get('role', 'user')).strip().lower()
-            if role not in {'system', 'user', 'assistant'}:
-                continue
-            content = raw_message.get('content', '')
-            if isinstance(content, list):
-                content = " ".join(
-                    str(item.get('text', '')) if isinstance(item, dict) else str(item)
-                    for item in content
-                )
-            content = str(content).strip()
-            if not content:
-                continue
-            normalized_messages.append({
-                "role": role,
-                "content": content[:15000],
-            })
+# --- MAIN APPLICATION ---
+@app.route('/app')
+def scanner_app():
+    # Extract user from session and pass it to the index template
+    user = session.get('user', {})
+    entry_animation = session.pop('entry_animation', '')
+    return render_template('index.html', user=user, entry_animation=entry_animation)
 
-        if not normalized_messages:
-            raise APIError("No valid messages were provided.", 400)
+@app.route('/analyze', methods=['POST'])
+@limiter.limit("10 per minute") # Prevent API abuse
+def analyze():
+    # --- NEW: INPUT VALIDATION ---
+    jd_raw = request.form.get('jd')
+    if not jd_raw or len(jd_raw.strip()) < 2:
+        raise APIError("Enter at least a short role title or job description.", 400)
 
-        try:
-            temperature = float(data.get('temperature', 0.2))
-        except Exception:
-            temperature = 0.2
-        temperature = max(0.0, min(temperature, 1.0))
+    file = request.files.get('resume')
+    resume_text = str(request.form.get('resume_text', '') or '')
+    file_name = str(request.form.get('file_name', '') or '').strip()
 
-        max_tokens = data.get('max_tokens')
-        try:
-            max_tokens = int(max_tokens) if max_tokens is not None else None
-        except Exception:
-            max_tokens = None
+    if not file and len(resume_text.strip()) < 40:
+        raise APIError("A resume file or extracted resume text is required.", 400)
 
-        try:
-            content = run_openrouter_chat(normalized_messages, temperature=temperature, max_tokens=max_tokens)
-        except Exception as exc:
-            raise APIError(str(exc), 502)
+    if file:
+        allowed_extensions = {'pdf', 'txt'}
+        if '.' not in file.filename or file.filename.rsplit('.', 1)[1].lower() not in allowed_extensions:
+            raise APIError("Invalid file type. Only PDF and TXT are allowed.", 400)
+        if not file_name:
+            file_name = file.filename
 
-        return jsonify({"success": True, "content": content})
-        
-    @app.route('/save_candidate', methods=['POST'])
-    def save_candidate():
-        if not DB_AVAILABLE:
-            return jsonify({"error": "Database not configured/available."}), 500
-            
-        data = request.json
-        if not data:
-            return jsonify({"error": "No data provided"}), 400
-            
-        jd_text = data.get('jd_text', 'No JD Provided')
-        candidate_data = data.get('candidate_data', {})
-        analysis_data = data.get('analysis_data', {})
-        
-        job_title = "Unknown Mission"
-        lines = [line.strip() for line in jd_text.split('\n') if line.strip()]
-        if lines:
-            job_title = lines[0][:90] 
-            
-        result = save_candidate_data(job_title, jd_text, candidate_data, analysis_data)
-        return jsonify(result)
-
-    @app.route('/api/leaderboard', methods=['GET'])
-    def get_leaderboard():
-        if not DB_AVAILABLE:
-            return jsonify({"error": "Database not configured/available."}), 500
-
-        try:
-            limit = int(request.args.get('limit', 50))
-        except Exception:
-            limit = 50
-        limit = max(1, min(limit, 100))
-
-        top_candidates = get_top_candidates(limit=limit)
-        return jsonify(top_candidates)
-
-    @app.route('/api/delete_candidate', methods=['POST'])
-    def delete_candidate():
-        if not DB_AVAILABLE:
-            return jsonify({"error": "Database not configured/available."}), 500
-            
-        data = request.json
-        name = data.get('name')
-        if not name:
-            return jsonify({"success": False, "error": "No name provided"}), 400
-            
-        success = delete_candidate_by_name(name)
-        return jsonify({"success": success})
-
-    @app.route('/api/purge', methods=['POST'])
-    def purge():
-        if not DB_AVAILABLE:
-            return jsonify({"error": "Database not configured/available."}), 500
-            
-        success = purge_database()
-        return jsonify({"success": success})
-
-    @app.route('/chat', methods=['POST'])
-    @limiter.limit("40 per hour")
-    def chat():
-        if not get_financial_answer:
-            return jsonify({"answer": "> **ERROR**: chat_engine.py not found on backend."}), 500
-
-        data = request.get_json(silent=True) or {}
-        query = str(data.get('query', '') or '').strip()
-        context_text = str(data.get('context', '') or '')
-        api_key = data.get('api_key', '')
-        history = data.get('history', []) if isinstance(data.get('history', []), list) else []
-        analysis_mode = str(data.get('analysis_mode', 'financial') or 'financial').strip().lower()
-        persona_mode = str(data.get('persona_mode', 'analyst') or 'analyst').strip().lower()
-        response_mode = str(data.get('response_mode', 'markdown') or 'markdown').strip().lower()
-        interview_mode = persona_mode == 'interview' and analysis_mode == 'resume'
-
-        if not query:
-            return jsonify({"error": "Query is required."}), 400
-
-        if response_mode == 'scorecard':
-            if analysis_mode != 'resume':
-                return jsonify({"error": "Structured scorecards are only available in Resume Analysis."}), 400
-            if not get_candidate_scorecard:
-                return jsonify({"error": "Structured scorecards are unavailable on this server."}), 500
-            scorecard = get_candidate_scorecard(
-                query,
-                context_text,
-                history=history,
-                interview_mode=interview_mode,
-                analysis_mode=analysis_mode,
-            )
-            answer = scorecard.get('markdown_summary') or scorecard.get('summary') or ''
-            payload = {"answer": answer, "mode": "scorecard", "scorecard": scorecard}
-        else:
-            answer = get_financial_answer(
-                query,
-                context_text,
-                api_key,
-                history,
-                interview_mode=interview_mode,
-                analysis_mode=analysis_mode,
-            )
-            payload = {"answer": answer, "mode": "markdown"}
-
-        if DB_AVAILABLE and answer:
-            save_chat_message(query, answer)
-
-        return jsonify(payload)
-
-    @app.route('/chat/stream', methods=['POST'])
-    @limiter.limit("40 per hour")
-    def chat_stream():
-        if not stream_financial_answer:
-            return Response(
-                build_sse_event("error", {"message": "Streaming chat is unavailable on this server."}),
-                status=500,
-                mimetype='text/event-stream',
-            )
-
-        data = request.get_json(silent=True) or {}
-        query = str(data.get('query', '') or '').strip()
-        context_text = str(data.get('context', '') or '')
-        history = data.get('history', []) if isinstance(data.get('history', []), list) else []
-        analysis_mode = str(data.get('analysis_mode', 'financial') or 'financial').strip().lower()
-        persona_mode = str(data.get('persona_mode', 'analyst') or 'analyst').strip().lower()
-        response_mode = str(data.get('response_mode', 'markdown') or 'markdown').strip().lower()
-        interview_mode = persona_mode == 'interview' and analysis_mode == 'resume'
-
-        if not query:
-            return Response(
-                build_sse_event("error", {"message": "Query is required."}),
-                status=400,
-                mimetype='text/event-stream',
-            )
-
-        def generate():
-            answer_parts = []
+    if len(resume_text.strip()) < 40 and file:
+        if PDFPLUMBER_AVAILABLE and file.filename.lower().endswith('.pdf'):
             try:
-                yield build_sse_event("start", {"mode": response_mode, "persona_mode": persona_mode, "analysis_mode": analysis_mode})
-                if response_mode == 'scorecard':
-                    if analysis_mode != 'resume':
-                        raise RuntimeError("Structured scorecards are only available in Resume Analysis.")
-                    if not get_candidate_scorecard:
-                        raise RuntimeError("Structured scorecards are unavailable on this server.")
-                    yield build_sse_event("status", {"message": "Building scorecard..."})
-                    scorecard = get_candidate_scorecard(
-                        query,
-                        context_text,
-                        history=history,
-                        interview_mode=interview_mode,
-                        analysis_mode=analysis_mode,
-                    )
-                    summary = scorecard.get('markdown_summary') or scorecard.get('summary') or ''
-                    if summary:
-                        answer_parts.append(summary)
-                    yield build_sse_event("widget", {"mode": "scorecard", "scorecard": scorecard})
-                else:
-                    for event in stream_financial_answer(
-                        query,
-                        context_text,
-                        history=history,
-                        interview_mode=interview_mode,
-                        analysis_mode=analysis_mode,
-                    ):
-                        event_type = str(event.get('type', '') or '')
-                        if event_type == 'status':
-                            yield build_sse_event("status", {"message": event.get('message', '')})
-                            continue
-                        if event_type == 'delta':
-                            chunk = str(event.get('content', '') or '')
-                            if chunk:
-                                answer_parts.append(chunk)
-                                yield build_sse_event("token", {"content": chunk})
+                with pdfplumber.open(file) as pdf:
+                    resume_text = " ".join([p.extract_text() for p in pdf.pages if p.extract_text()])
+            except Exception:
+                raise APIError("Could not read PDF text from the uploaded resume.", 500)
+        else:
+            try:
+                file.stream.seek(0)
+                raw = file.stream.read()
+                resume_text = raw.decode('utf-8', errors='ignore')
+            except Exception:
+                resume_text = ""
 
-                final_answer = "".join(answer_parts).strip()
-                if DB_AVAILABLE and final_answer:
-                    save_chat_message(query, final_answer)
-                yield build_sse_event("done", {"answer": final_answer, "mode": response_mode})
-            except Exception as exc:
-                yield build_sse_event("error", {"message": str(exc)})
+    if len(resume_text.strip()) < 40:
+        raise APIError("The resume text was too short to analyze reliably.", 400)
 
+    if analyze_resume_document:
+        result = analyze_resume_document(jd_raw, resume_text, file_name=file_name)
+    else:
+        result = compute_match(jd_raw, resume_text)
+    return jsonify(result)
+
+@app.route('/api/ai/chat', methods=['POST'])
+@limiter.limit("40 per hour")
+def ai_chat_proxy():
+    if not run_openrouter_chat:
+        raise APIError("AI proxy is unavailable on this server.", 500)
+
+    data = request.get_json(silent=True) or {}
+    messages = data.get('messages')
+    if not isinstance(messages, list) or not messages:
+        raise APIError("A non-empty messages array is required.", 400)
+
+    normalized_messages = []
+    for raw_message in messages[-10:]:
+        if not isinstance(raw_message, dict):
+            continue
+        role = str(raw_message.get('role', 'user')).strip().lower()
+        if role not in {'system', 'user', 'assistant'}:
+            continue
+        content = raw_message.get('content', '')
+        if isinstance(content, list):
+            content = " ".join(
+                str(item.get('text', '')) if isinstance(item, dict) else str(item)
+                for item in content
+            )
+        content = str(content).strip()
+        if not content:
+            continue
+        normalized_messages.append({
+            "role": role,
+            "content": content[:15000],
+        })
+
+    if not normalized_messages:
+        raise APIError("No valid messages were provided.", 400)
+
+    try:
+        temperature = float(data.get('temperature', 0.2))
+    except Exception:
+        temperature = 0.2
+    temperature = max(0.0, min(temperature, 1.0))
+
+    max_tokens = data.get('max_tokens')
+    try:
+        max_tokens = int(max_tokens) if max_tokens is not None else None
+    except Exception:
+        max_tokens = None
+
+    try:
+        content = run_openrouter_chat(normalized_messages, temperature=temperature, max_tokens=max_tokens)
+    except Exception as exc:
+        raise APIError(str(exc), 502)
+
+    return jsonify({"success": True, "content": content})
+    
+@app.route('/save_candidate', methods=['POST'])
+def save_candidate():
+    if not DB_AVAILABLE:
+        return jsonify({"error": "Database not configured/available."}), 500
+        
+    data = request.json
+    if not data:
+        return jsonify({"error": "No data provided"}), 400
+        
+    jd_text = data.get('jd_text', 'No JD Provided')
+    candidate_data = data.get('candidate_data', {})
+    analysis_data = data.get('analysis_data', {})
+    
+    job_title = "Unknown Mission"
+    lines = [line.strip() for line in jd_text.split('\n') if line.strip()]
+    if lines:
+        job_title = lines[0][:90] 
+        
+    result = save_candidate_data(job_title, jd_text, candidate_data, analysis_data)
+    return jsonify(result)
+
+@app.route('/api/leaderboard', methods=['GET'])
+def get_leaderboard():
+    if not DB_AVAILABLE:
+        return jsonify({"error": "Database not configured/available."}), 500
+
+    try:
+        limit = int(request.args.get('limit', 50))
+    except Exception:
+        limit = 50
+    limit = max(1, min(limit, 100))
+
+    top_candidates = get_top_candidates(limit=limit)
+    return jsonify(top_candidates)
+
+@app.route('/api/delete_candidate', methods=['POST'])
+def delete_candidate():
+    if not DB_AVAILABLE:
+        return jsonify({"error": "Database not configured/available."}), 500
+        
+    data = request.json
+    name = data.get('name')
+    if not name:
+        return jsonify({"success": False, "error": "No name provided"}), 400
+        
+    success = delete_candidate_by_name(name)
+    return jsonify({"success": success})
+
+@app.route('/api/purge', methods=['POST'])
+def purge():
+    if not DB_AVAILABLE:
+        return jsonify({"error": "Database not configured/available."}), 500
+        
+    success = purge_database()
+    return jsonify({"success": success})
+
+@app.route('/chat', methods=['POST'])
+@limiter.limit("40 per hour")
+def chat():
+    if not get_financial_answer:
+        return jsonify({"answer": "> **ERROR**: chat_engine.py not found on backend."}), 500
+
+    data = request.get_json(silent=True) or {}
+    query = str(data.get('query', '') or '').strip()
+    context_text = str(data.get('context', '') or '')
+    api_key = data.get('api_key', '')
+    history = data.get('history', []) if isinstance(data.get('history', []), list) else []
+    analysis_mode = str(data.get('analysis_mode', 'financial') or 'financial').strip().lower()
+    persona_mode = str(data.get('persona_mode', 'analyst') or 'analyst').strip().lower()
+    response_mode = str(data.get('response_mode', 'markdown') or 'markdown').strip().lower()
+    interview_mode = persona_mode == 'interview' and analysis_mode == 'resume'
+
+    if not query:
+        return jsonify({"error": "Query is required."}), 400
+
+    if response_mode == 'scorecard':
+        if analysis_mode != 'resume':
+            return jsonify({"error": "Structured scorecards are only available in Resume Analysis."}), 400
+        if not get_candidate_scorecard:
+            return jsonify({"error": "Structured scorecards are unavailable on this server."}), 500
+        scorecard = get_candidate_scorecard(
+            query,
+            context_text,
+            history=history,
+            interview_mode=interview_mode,
+            analysis_mode=analysis_mode,
+        )
+        answer = scorecard.get('markdown_summary') or scorecard.get('summary') or ''
+        payload = {"answer": answer, "mode": "scorecard", "scorecard": scorecard}
+    else:
+        answer = get_financial_answer(
+            query,
+            context_text,
+            api_key,
+            history,
+            interview_mode=interview_mode,
+            analysis_mode=analysis_mode,
+        )
+        payload = {"answer": answer, "mode": "markdown"}
+
+    if DB_AVAILABLE and answer:
+        save_chat_message(query, answer)
+
+    return jsonify(payload)
+
+@app.route('/chat/stream', methods=['POST'])
+@limiter.limit("40 per hour")
+def chat_stream():
+    if not stream_financial_answer:
         return Response(
-            stream_with_context(generate()),
+            build_sse_event("error", {"message": "Streaming chat is unavailable on this server."}),
+            status=500,
             mimetype='text/event-stream',
-            headers={
-                'Cache-Control': 'no-cache',
-                'X-Accel-Buffering': 'no',
-            },
         )
 
-    @app.route('/api/osint_trace', methods=['POST'])
-    @limiter.limit("20 per minute")
-    def osint_trace():
-        if not build_osint_bundle:
-            return jsonify({"success": False, "error": "OSINT engine unavailable."}), 500
+    data = request.get_json(silent=True) or {}
+    query = str(data.get('query', '') or '').strip()
+    context_text = str(data.get('context', '') or '')
+    history = data.get('history', []) if isinstance(data.get('history', []), list) else []
+    analysis_mode = str(data.get('analysis_mode', 'financial') or 'financial').strip().lower()
+    persona_mode = str(data.get('persona_mode', 'analyst') or 'analyst').strip().lower()
+    response_mode = str(data.get('response_mode', 'markdown') or 'markdown').strip().lower()
+    interview_mode = persona_mode == 'interview' and analysis_mode == 'resume'
 
-        data = request.json
-        if not data:
-            return jsonify({"success": False, "error": "No request data"}), 400
+    if not query:
+        return Response(
+            build_sse_event("error", {"message": "Query is required."}),
+            status=400,
+            mimetype='text/event-stream',
+        )
 
-        target_name = data.get('name', '').strip()
-        context_text = data.get('context', '')
-        if not target_name:
-            return jsonify({"success": False, "error": "Candidate name is required."}), 400
-
-        bundle = build_osint_bundle(target_name, context_text)
-        return jsonify({"success": True, "data": bundle})
-
-    if __name__ == '__main__':
-        # NOTE: OAuth often strictly requires HTTPS, but works on 127.0.0.1 in development
-        app.run(debug=True, use_reloader=False)
-else:
-    def _read_text_from_path(path):
+    def generate():
+        answer_parts = []
         try:
-            with open(path, 'rb') as f:
-                data = f.read()
-            return data.decode('utf-8', errors='ignore')
-        except Exception:
-            return ''
+            yield build_sse_event("start", {"mode": response_mode, "persona_mode": persona_mode, "analysis_mode": analysis_mode})
+            if response_mode == 'scorecard':
+                if analysis_mode != 'resume':
+                    raise RuntimeError("Structured scorecards are only available in Resume Analysis.")
+                if not get_candidate_scorecard:
+                    raise RuntimeError("Structured scorecards are unavailable on this server.")
+                yield build_sse_event("status", {"message": "Building scorecard..."})
+                scorecard = get_candidate_scorecard(
+                    query,
+                    context_text,
+                    history=history,
+                    interview_mode=interview_mode,
+                    analysis_mode=analysis_mode,
+                )
+                summary = scorecard.get('markdown_summary') or scorecard.get('summary') or ''
+                if summary:
+                    answer_parts.append(summary)
+                yield build_sse_event("widget", {"mode": "scorecard", "scorecard": scorecard})
+            else:
+                for event in stream_financial_answer(
+                    query,
+                    context_text,
+                    history=history,
+                    interview_mode=interview_mode,
+                    analysis_mode=analysis_mode,
+                ):
+                    event_type = str(event.get('type', '') or '')
+                    if event_type == 'status':
+                        yield build_sse_event("status", {"message": event.get('message', '')})
+                        continue
+                    if event_type == 'delta':
+                        chunk = str(event.get('content', '') or '')
+                        if chunk:
+                            answer_parts.append(chunk)
+                            yield build_sse_event("token", {"content": chunk})
 
-    def _usage_and_exit():
-        print('Usage: python app.py <job_description.txt> <resume.txt_or_pdf_optional>')
-        sys.exit(1)
+            final_answer = "".join(answer_parts).strip()
+            if DB_AVAILABLE and final_answer:
+                save_chat_message(query, final_answer)
+            yield build_sse_event("done", {"answer": final_answer, "mode": response_mode})
+        except Exception as exc:
+            yield build_sse_event("error", {"message": str(exc)})
 
-    if __name__ == '__main__':
-        if len(sys.argv) < 2:
-            jd_text = "Looking for a Python developer with Flask and REST API experience."
-            resume_text = "Experienced Python developer; worked with APIs, Flask, and testing."
-        else:
-            jd_path = sys.argv[1]
-            resume_path = sys.argv[2] if len(sys.argv) > 2 else None
-            jd_text = _read_text_from_path(jd_path)
-            resume_text = _read_text_from_path(resume_path) if resume_path else ''
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+        },
+    )
 
-        output = compute_match(jd_text, resume_text)
-        print(json.dumps(output, indent=2))
+@app.route('/api/osint_trace', methods=['POST'])
+@limiter.limit("20 per minute")
+def osint_trace():
+    if not build_osint_bundle:
+        return jsonify({"success": False, "error": "OSINT engine unavailable."}), 500
+
+    data = request.json
+    if not data:
+        return jsonify({"success": False, "error": "No request data"}), 400
+
+    target_name = data.get('name', '').strip()
+    context_text = data.get('context', '')
+    if not target_name:
+        return jsonify({"success": False, "error": "Candidate name is required."}), 400
+
+    bundle = build_osint_bundle(target_name, context_text)
+    return jsonify({"success": True, "data": bundle})
+
+if __name__ == '__main__':
+    # NOTE: OAuth often strictly requires HTTPS, but works on 127.0.0.1 in development
+    app.run(debug=True, use_reloader=False)
