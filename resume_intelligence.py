@@ -125,8 +125,9 @@ GENERIC_TITLE_PATTERN = re.compile(
 )
 
 DEGREE_PATTERN = re.compile(
-    r"\b(?:b\.?tech|m\.?tech|b\.?e\.?|m\.?e\.?|bachelor(?:'s)?|master(?:'s)?|mba|ph\.?d|"
-    r"bsc|msc|bs|ms|bca|mca)\b[^,\n]{0,80}",
+    r"\b(?:integrated\s+)?(?:b\.?\s*tech|m\.?\s*tech|b\.?\s*sc|m\.?\s*sc|b\.?\s*ca|m\.?\s*ca|"
+    r"b\.?\s*com|m\.?\s*com|b\.e\.|m\.e\.|bachelor(?:'s)?|master(?:'s)?|mba|ph\.?\s*d|"
+    r"doctorate|diploma)\b[^,\n]{0,100}",
     re.IGNORECASE,
 )
 
@@ -137,6 +138,23 @@ YEAR_RANGE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 EXPLICIT_YEARS_PATTERN = re.compile(r"\b(\d{1,2})\+?\s+years?\b", re.IGNORECASE)
+EDUCATION_INSTITUTION_PATTERN = re.compile(
+    r"\b(?:university|college|institute|school|academy|department|faculty|campus)\b",
+    re.IGNORECASE,
+)
+EDUCATION_CONTEXT_PATTERN = re.compile(
+    r"\b(?:education|academic|specialization|major|minor|coursework|cgpa|gpa|graduation|"
+    r"graduated|completion|completed|semester|distinction|honou?r)\b",
+    re.IGNORECASE,
+)
+LOCATION_NOISE_PATTERN = re.compile(
+    r"\b(?:linkedin|github|portfolio|summary|about|education|skills?|project|experience|"
+    r"python|sql|tensorflow|keras|scikit|opencv|densenet|flask|numpy|pandas|excel|vlookup|"
+    r"xlookup|power bi|tableau|mysql|sqlite|snowflake|aws|cnn|machine learning|deep learning|"
+    r"dashboard|analysis|engineering|recommendation|attendance|system|university|college|"
+    r"semester|specialization)\b",
+    re.IGNORECASE,
+)
 
 
 def _clean_space(value):
@@ -234,26 +252,45 @@ def _extract_phones(text):
     return _unique(values, limit=3)
 
 
+def _looks_like_location_value(value):
+    clean = _normalize_line(value)
+    lowered = clean.lower()
+    if not clean:
+        return False
+    if lowered in {"remote", "hybrid", "onsite"}:
+        return True
+    if len(clean) > 60 or len(clean.split()) > 7:
+        return False
+    if EMAIL_PATTERN.search(clean) or PHONE_PATTERN.search(clean) or re.search(r"\d", clean):
+        return False
+    if ":" in clean or "|" in clean or "/" in clean:
+        return False
+    if LOCATION_NOISE_PATTERN.search(lowered):
+        return False
+    return bool(re.fullmatch(r"[A-Za-z .'\-]+(?:,\s*[A-Za-z .'\-]+){0,2}", clean))
+
+
 def _extract_location(text):
-    lines = [_normalize_line(line) for line in str(text or "").splitlines()[:8]]
+    lines = [_normalize_line(line) for line in str(text or "").splitlines()[:12]]
     location_pattern = re.compile(r"^[A-Za-z .'\-]{2,40},\s*[A-Za-z .'\-]{2,40}$")
     for line in lines:
         lowered = line.lower()
         if "|" in line:
             location_parts = []
             for part in [piece.strip() for piece in line.split("|") if piece.strip()]:
-                if EMAIL_PATTERN.search(part) or PHONE_PATTERN.search(part) or re.search(r"\d", part):
-                    continue
                 if re.search(r"\b(?:male|female|indian|citizenship|nationality)\b", part.lower()):
                     continue
-                location_parts.append(part)
+                if _looks_like_location_value(part):
+                    location_parts.append(part)
             if location_parts:
                 return ", ".join(location_parts[:2])
         if lowered.startswith(("location:", "address:", "based in")):
             parts = line.split(":", 1)
             if len(parts) == 2:
-                return parts[1].strip()
-        if location_pattern.match(line) and not re.search(r"[@\d]", line) and not re.search(r"\b(?:python|sql|aws|docker|flask|skills?)\b", lowered):
+                candidate = parts[1].strip()
+                if _looks_like_location_value(candidate):
+                    return candidate
+        if location_pattern.match(line) and _looks_like_location_value(line):
             return line
     return ""
 
@@ -285,11 +322,47 @@ def _extract_companies(text):
 
 
 def _extract_education(text, sections):
-    candidates = []
-    for source in (sections.get("education", ""), str(text or "")):
-        candidates.extend(match.group(0) for match in DEGREE_PATTERN.finditer(source))
-    values = _unique(candidates, limit=3)
-    return values if values else []
+    section_lines = [
+        _normalize_line(line)
+        for line in str(sections.get("education", "") or "").splitlines()
+        if _normalize_line(line)
+    ]
+    values = []
+
+    degree_index = next((idx for idx, line in enumerate(section_lines) if DEGREE_PATTERN.search(line)), None)
+    if degree_index is not None:
+        degree_line = section_lines[degree_index]
+        if degree_index + 1 < len(section_lines):
+            follow_up = section_lines[degree_index + 1]
+            if EDUCATION_CONTEXT_PATTERN.search(follow_up) and not EDUCATION_INSTITUTION_PATTERN.search(degree_line):
+                degree_line = f"{degree_line} {follow_up}"
+        values.append(degree_line)
+
+    institution_line = next((line for line in section_lines if EDUCATION_INSTITUTION_PATTERN.search(line)), "")
+    if institution_line:
+        values.append(institution_line)
+
+    if values:
+        return _unique(values, limit=2)
+
+    fallback_lines = [
+        _normalize_line(line)
+        for line in str(text or "").splitlines()[:40]
+        if _normalize_line(line)
+    ]
+    for index, line in enumerate(fallback_lines):
+        if not DEGREE_PATTERN.search(line):
+            continue
+        if LOCATION_NOISE_PATTERN.search(line.lower()) and not EDUCATION_CONTEXT_PATTERN.search(line):
+            continue
+        values.append(line)
+        if index + 1 < len(fallback_lines):
+            follow_up = fallback_lines[index + 1]
+            if EDUCATION_INSTITUTION_PATTERN.search(follow_up):
+                values.append(follow_up)
+        break
+
+    return _unique(values, limit=2) if values else []
 
 
 def _extract_years_experience(text, sections):

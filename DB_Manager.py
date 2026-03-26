@@ -1,4 +1,5 @@
 import os
+import json
 import mysql.connector
 from mysql.connector import Error
 import hashlib
@@ -100,6 +101,417 @@ def ensure_platform_user_table(cursor):
     for column_name, alter_sql in required_columns.items():
         if column_name not in existing_columns:
             cursor.execute(alter_sql)
+
+def _normalize_user_email(email):
+    return str(email or "").strip().lower()[:100]
+
+def _json_dumps(value):
+    return json.dumps(value if value is not None else {}, ensure_ascii=False)
+
+def _json_loads(value, fallback=None):
+    if fallback is None:
+        fallback = {}
+    raw = str(value or "").strip()
+    if not raw:
+        return fallback
+    try:
+        return json.loads(raw)
+    except Exception:
+        return fallback
+
+def _serialize_datetime(value):
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value or "")
+
+def _get_platform_user_by_email(cursor, user_email):
+    safe_email = _normalize_user_email(user_email)
+    if not safe_email:
+        return None
+    ensure_platform_user_table(cursor)
+    cursor.execute("SELECT * FROM platform_users WHERE email = %s LIMIT 1", (safe_email,))
+    return cursor.fetchone()
+
+def ensure_user_workspace_tables(cursor):
+    ensure_platform_user_table(cursor)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_candidate_dossiers (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            job_title VARCHAR(100),
+            job_description MEDIUMTEXT,
+            candidate_name VARCHAR(100),
+            candidate_email VARCHAR(100),
+            candidate_role VARCHAR(120),
+            skills TEXT,
+            experience VARCHAR(50),
+            education VARCHAR(255),
+            resume_score INT DEFAULT 0,
+            resume_text MEDIUMTEXT,
+            candidate_json LONGTEXT,
+            analysis_json LONGTEXT,
+            dossier_json LONGTEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_user_candidate_updated (user_id, updated_at),
+            CONSTRAINT fk_user_candidate_owner FOREIGN KEY (user_id) REFERENCES platform_users(id) ON DELETE CASCADE
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS user_chat_sessions (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            session_key VARCHAR(80) NOT NULL,
+            analysis_mode VARCHAR(20) DEFAULT 'financial',
+            display_name VARCHAR(255),
+            source_name VARCHAR(255),
+            context_text LONGTEXT,
+            history_json LONGTEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_user_session_key (user_id, session_key),
+            INDEX idx_user_chat_updated (user_id, updated_at),
+            CONSTRAINT fk_user_chat_owner FOREIGN KEY (user_id) REFERENCES platform_users(id) ON DELETE CASCADE
+        )
+    """)
+
+def save_candidate_dossier_for_user(user_email, job_title, job_description, candidate_data, analysis_data, dossier_data=None, resume_text=""):
+    """Saves a full resume dossier for the authenticated user."""
+    conn = get_connection()
+    if not conn:
+        return {"success": False, "error": "Database connection failed"}
+
+    cursor = None
+    try:
+        cursor = conn.cursor(dictionary=True)
+        ensure_user_workspace_tables(cursor)
+        user = _get_platform_user_by_email(cursor, user_email)
+        if not user:
+            return {"success": False, "error": "Authenticated user not found"}
+
+        candidate_payload = candidate_data if isinstance(candidate_data, dict) else {}
+        analysis_payload = analysis_data if isinstance(analysis_data, dict) else {}
+        dossier_payload = dossier_data if isinstance(dossier_data, dict) else {}
+
+        safe_job_title = str(job_title or "Unknown Mission").strip()[:100]
+        safe_job_description = str(job_description or "")[:200000]
+        safe_name = str(candidate_payload.get("name") or dossier_payload.get("fileName") or "Unknown")[:100]
+        safe_email = str(candidate_payload.get("email") or "")[:100]
+        safe_role = candidate_payload.get("job_titles")
+        if isinstance(safe_role, list):
+            safe_role = safe_role[0] if safe_role else ""
+        safe_role = str(safe_role or "")[:120]
+        safe_skills = candidate_payload.get("skills") or analysis_payload.get("matched_skills") or ""
+        if isinstance(safe_skills, list):
+            safe_skills = ", ".join(str(item).strip() for item in safe_skills if str(item).strip())
+        safe_experience = str(candidate_payload.get("total_experience_years") or "")[:50]
+        safe_education = candidate_payload.get("education") or ""
+        if isinstance(safe_education, list):
+            safe_education = ", ".join(str(item).strip() for item in safe_education if str(item).strip())
+        safe_education = str(safe_education or "")[:255]
+        safe_resume_score = int(analysis_payload.get("overall_score") or 0)
+        safe_resume_text = str(resume_text or dossier_payload.get("resumeText") or "")[:1000000]
+
+        cursor.execute("""
+            INSERT INTO user_candidate_dossiers (
+                user_id,
+                job_title,
+                job_description,
+                candidate_name,
+                candidate_email,
+                candidate_role,
+                skills,
+                experience,
+                education,
+                resume_score,
+                resume_text,
+                candidate_json,
+                analysis_json,
+                dossier_json
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            user["id"],
+            safe_job_title,
+            safe_job_description,
+            safe_name,
+            safe_email,
+            safe_role,
+            str(safe_skills or ""),
+            safe_experience,
+            safe_education,
+            safe_resume_score,
+            safe_resume_text,
+            _json_dumps(candidate_payload),
+            _json_dumps(analysis_payload),
+            _json_dumps(dossier_payload),
+        ))
+        conn.commit()
+        return {"success": True, "record_id": cursor.lastrowid}
+    except Error as e:
+        conn.rollback()
+        print(f"Failed to save user candidate dossier: {e}")
+        return {"success": False, "error": str(e)}
+    finally:
+        if cursor:
+            cursor.close()
+        if conn.is_connected():
+            conn.close()
+
+def get_user_candidate_dossiers(user_email, limit=50):
+    """Returns the authenticated user's saved resume dossiers."""
+    conn = get_connection()
+    if not conn:
+        return []
+
+    cursor = None
+    try:
+        cursor = conn.cursor(dictionary=True)
+        ensure_user_workspace_tables(cursor)
+        user = _get_platform_user_by_email(cursor, user_email)
+        if not user:
+            return []
+
+        cursor.execute("""
+            SELECT
+                id,
+                job_title,
+                candidate_name,
+                candidate_email,
+                skills,
+                experience,
+                education,
+                resume_score,
+                dossier_json,
+                created_at,
+                updated_at
+            FROM user_candidate_dossiers
+            WHERE user_id = %s
+            ORDER BY updated_at DESC, id DESC
+            LIMIT %s
+        """, (user["id"], max(1, min(int(limit or 50), 100))))
+        records = []
+        for row in cursor.fetchall():
+            dossier = _json_loads(row.get("dossier_json"), None)
+            records.append({
+                "record_id": row.get("id"),
+                "name": str(row.get("candidate_name") or "Unknown"),
+                "email": str(row.get("candidate_email") or "N/A"),
+                "skills": str(row.get("skills") or ""),
+                "resume_score": int(row.get("resume_score") or 0),
+                "job_title": str(row.get("job_title") or "Unassigned"),
+                "total_experience_years": str(row.get("experience") or ""),
+                "education": str(row.get("education") or ""),
+                "dossier_data": dossier,
+                "created_at": _serialize_datetime(row.get("created_at")),
+                "updated_at": _serialize_datetime(row.get("updated_at")),
+            })
+        return records
+    except Error as e:
+        print(f"Failed to fetch user candidate dossiers: {e}")
+        return []
+    finally:
+        if cursor:
+            cursor.close()
+        if conn.is_connected():
+            conn.close()
+
+def delete_user_candidate_dossier(user_email, record_id):
+    """Deletes a single saved dossier for the authenticated user."""
+    conn = get_connection()
+    if not conn:
+        return {"success": False, "error": "Database connection failed"}
+
+    cursor = None
+    try:
+        cursor = conn.cursor(dictionary=True)
+        ensure_user_workspace_tables(cursor)
+        user = _get_platform_user_by_email(cursor, user_email)
+        if not user:
+            return {"success": False, "error": "Authenticated user not found"}
+
+        cursor.execute(
+            "DELETE FROM user_candidate_dossiers WHERE id = %s AND user_id = %s",
+            (int(record_id), user["id"])
+        )
+        conn.commit()
+        return {"success": cursor.rowcount > 0}
+    except Error as e:
+        conn.rollback()
+        print(f"Failed to delete user candidate dossier: {e}")
+        return {"success": False, "error": str(e)}
+    finally:
+        if cursor:
+            cursor.close()
+        if conn.is_connected():
+            conn.close()
+
+def purge_user_candidate_dossiers(user_email):
+    """Deletes every saved dossier for the authenticated user."""
+    conn = get_connection()
+    if not conn:
+        return {"success": False, "error": "Database connection failed"}
+
+    cursor = None
+    try:
+        cursor = conn.cursor(dictionary=True)
+        ensure_user_workspace_tables(cursor)
+        user = _get_platform_user_by_email(cursor, user_email)
+        if not user:
+            return {"success": False, "error": "Authenticated user not found"}
+
+        cursor.execute("DELETE FROM user_candidate_dossiers WHERE user_id = %s", (user["id"],))
+        conn.commit()
+        return {"success": True}
+    except Error as e:
+        conn.rollback()
+        print(f"Failed to purge user candidate dossiers: {e}")
+        return {"success": False, "error": str(e)}
+    finally:
+        if cursor:
+            cursor.close()
+        if conn.is_connected():
+            conn.close()
+
+def upsert_user_chat_session(user_email, session_key, analysis_mode, display_name, source_name, context_text, history):
+    """Creates or updates a saved chat/document session for the authenticated user."""
+    conn = get_connection()
+    if not conn:
+        return {"success": False, "error": "Database connection failed"}
+
+    cursor = None
+    try:
+        cursor = conn.cursor(dictionary=True)
+        ensure_user_workspace_tables(cursor)
+        user = _get_platform_user_by_email(cursor, user_email)
+        if not user:
+            return {"success": False, "error": "Authenticated user not found"}
+
+        safe_session_key = str(session_key or "").strip()[:80]
+        if not safe_session_key:
+            return {"success": False, "error": "Session key is required"}
+        safe_mode = "resume" if str(analysis_mode or "").strip().lower() == "resume" else "financial"
+        safe_display_name = str(display_name or source_name or "Workspace session").strip()[:255]
+        safe_source_name = str(source_name or display_name or "Workspace session").strip()[:255]
+        safe_context = str(context_text or "")[:1000000]
+        safe_history = history if isinstance(history, list) else []
+
+        cursor.execute("""
+            INSERT INTO user_chat_sessions (
+                user_id,
+                session_key,
+                analysis_mode,
+                display_name,
+                source_name,
+                context_text,
+                history_json
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                analysis_mode = VALUES(analysis_mode),
+                display_name = VALUES(display_name),
+                source_name = VALUES(source_name),
+                context_text = VALUES(context_text),
+                history_json = VALUES(history_json),
+                updated_at = CURRENT_TIMESTAMP
+        """, (
+            user["id"],
+            safe_session_key,
+            safe_mode,
+            safe_display_name,
+            safe_source_name,
+            safe_context,
+            _json_dumps(safe_history),
+        ))
+        conn.commit()
+        return {"success": True}
+    except Error as e:
+        conn.rollback()
+        print(f"Failed to save user chat session: {e}")
+        return {"success": False, "error": str(e)}
+    finally:
+        if cursor:
+            cursor.close()
+        if conn.is_connected():
+            conn.close()
+
+def get_user_chat_sessions(user_email):
+    """Returns saved chat/document sessions for the authenticated user."""
+    conn = get_connection()
+    if not conn:
+        return []
+
+    cursor = None
+    try:
+        cursor = conn.cursor(dictionary=True)
+        ensure_user_workspace_tables(cursor)
+        user = _get_platform_user_by_email(cursor, user_email)
+        if not user:
+            return []
+
+        cursor.execute("""
+            SELECT
+                session_key,
+                analysis_mode,
+                display_name,
+                source_name,
+                context_text,
+                history_json,
+                created_at,
+                updated_at
+            FROM user_chat_sessions
+            WHERE user_id = %s
+            ORDER BY updated_at DESC, id DESC
+        """, (user["id"],))
+        sessions = []
+        for row in cursor.fetchall():
+            sessions.append({
+                "session_key": str(row.get("session_key") or ""),
+                "analysis_mode": str(row.get("analysis_mode") or "financial"),
+                "display_name": str(row.get("display_name") or row.get("source_name") or "Workspace session"),
+                "source_name": str(row.get("source_name") or row.get("display_name") or "Workspace session"),
+                "context": str(row.get("context_text") or ""),
+                "history": _json_loads(row.get("history_json"), []),
+                "created_at": _serialize_datetime(row.get("created_at")),
+                "updated_at": _serialize_datetime(row.get("updated_at")),
+            })
+        return sessions
+    except Error as e:
+        print(f"Failed to fetch user chat sessions: {e}")
+        return []
+    finally:
+        if cursor:
+            cursor.close()
+        if conn.is_connected():
+            conn.close()
+
+def delete_user_chat_session(user_email, session_key):
+    """Deletes a saved chat/document session for the authenticated user."""
+    conn = get_connection()
+    if not conn:
+        return {"success": False, "error": "Database connection failed"}
+
+    cursor = None
+    try:
+        cursor = conn.cursor(dictionary=True)
+        ensure_user_workspace_tables(cursor)
+        user = _get_platform_user_by_email(cursor, user_email)
+        if not user:
+            return {"success": False, "error": "Authenticated user not found"}
+
+        cursor.execute(
+            "DELETE FROM user_chat_sessions WHERE user_id = %s AND session_key = %s",
+            (user["id"], str(session_key or "").strip()[:80])
+        )
+        conn.commit()
+        return {"success": cursor.rowcount > 0}
+    except Error as e:
+        conn.rollback()
+        print(f"Failed to delete user chat session: {e}")
+        return {"success": False, "error": str(e)}
+    finally:
+        if cursor:
+            cursor.close()
+        if conn.is_connected():
+            conn.close()
 
 def _split_name(full_name):
     safe_name = str(full_name or "").strip()

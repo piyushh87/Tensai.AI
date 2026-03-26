@@ -21,7 +21,7 @@ except ImportError:
 
 # Prefer a server-side environment variable, but keep the existing fallback so the app
 # does not silently lose functionality in local development.
-HARDCODED_API_KEY = os.getenv("OPENROUTER_API_KEY", "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")
+HARDCODED_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_URL = "https://" + "openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "openai/gpt-4o-mini"
 MAX_CONTEXT_CHARS = 60000
@@ -169,6 +169,104 @@ def _format_provider_error(status_code, error_body, requested_tokens):
     return f"> **Backend Connection Error**: HTTP {status_code}."
 
 
+def _normalize_document_lines(context_text, min_length=24):
+    raw_text = str(context_text or "")
+    raw_text = re.sub(r"---\s*PAGE\s*\d+\s*---", " ", raw_text, flags=re.IGNORECASE)
+    lines = []
+    seen = set()
+    for raw_line in re.split(r"[\r\n]+", raw_text):
+        line = re.sub(r"\s+", " ", str(raw_line or "")).strip(" -•\t")
+        if len(line) < min_length:
+            continue
+        lowered = line.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        lines.append(line)
+    return lines
+
+
+def _extract_financial_reporting_period(context_text):
+    text = str(context_text or "")
+    match = re.search(r"\b(?:FY|Q[1-4])\s*[- ]?\s*(20\d{2})\b", text, flags=re.IGNORECASE)
+    if match:
+        return match.group(0).upper().replace(" ", "")
+    match = re.search(r"\b(?:fiscal year|quarter ended|year ended)\s+([A-Za-z]+\s+\d{1,2},\s+20\d{2})\b", text, flags=re.IGNORECASE)
+    if match:
+        return match.group(1)
+    return "Not clearly stated"
+
+
+def _extract_financial_evidence_lines(context_text, limit=6):
+    keyword_pattern = re.compile(
+        r"\$|%|\brevenue\b|\bmargin\b|\bcash\b|\bdebt\b|\bprofit\b|\bincome\b|\bebitda\b|\bexpense\b|\bguidance\b|\boperating\b",
+        flags=re.IGNORECASE,
+    )
+    lines = [line for line in _normalize_document_lines(context_text, min_length=18) if keyword_pattern.search(line)]
+    return lines[:limit]
+
+
+def _extract_watchout_lines(context_text, limit=4):
+    risk_pattern = re.compile(
+        r"\brisk\b|\buncertain\b|\bdebt\b|\bloss\b|\bdeclin\b|\bpressure\b|\bheadwind\b|\bdown\b|\bweak\b|\bchallenge\b",
+        flags=re.IGNORECASE,
+    )
+    lines = [line for line in _normalize_document_lines(context_text, min_length=18) if risk_pattern.search(line)]
+    return lines[:limit]
+
+
+def _extract_summary_lines(context_text, limit=3):
+    signal_pattern = re.compile(
+        r"\bgrow\b|\bincreas\b|\bimprov\b|\bexpand\b|\bdemand\b|\brevenue\b|\bmargin\b|\bcash\b|\bguidance\b|\bstrong\b",
+        flags=re.IGNORECASE,
+    )
+    prioritized = [line for line in _normalize_document_lines(context_text, min_length=18) if signal_pattern.search(line)]
+    lines = prioritized or _normalize_document_lines(context_text, min_length=28)
+    return lines[:limit]
+
+
+def _build_local_financial_fallback_answer(query, context_text, provider_error=""):
+    summary_lines = _extract_summary_lines(context_text, limit=3)
+    evidence_lines = _extract_financial_evidence_lines(context_text, limit=5)
+    watchout_lines = _extract_watchout_lines(context_text, limit=3)
+    reporting_period = _extract_financial_reporting_period(context_text)
+    prompt = str(query or "").strip().lower()
+
+    sections = [
+        "> **Local fallback mode**: The live AI provider is unavailable right now, so this response was built directly from the uploaded document text.",
+        f"> **Provider status**: {provider_error or 'OpenRouter unavailable.'}",
+        "",
+        f"### Financial Snapshot ({reporting_period})",
+    ]
+
+    if "risk" in prompt or "watch" in prompt or "concern" in prompt:
+        sections.append("### Risk Watch")
+        risk_items = watchout_lines or evidence_lines[:2] or ["No explicit risk wording was found in the extracted text. Review debt, margin pressure, and guidance language manually."]
+        sections.extend([f"- {item}" for item in risk_items])
+        sections.append("")
+        sections.append("### Supporting Evidence")
+        sections.extend([f"- {item}" for item in (evidence_lines or summary_lines or ["The uploaded document text did not expose strong numeric evidence in the extracted content."])])
+        return "\n".join(sections)
+
+    if "metric" in prompt or "number" in prompt or "figure" in prompt:
+        sections.append("### Key Evidence")
+        sections.extend([f"- {item}" for item in (evidence_lines or ["The extracted document text did not expose clear metric lines."])])
+        sections.append("")
+        sections.append("### Watchouts")
+        sections.extend([f"- {item}" for item in (watchout_lines or ["No explicit risk language was detected in the extracted content."])])
+        return "\n".join(sections)
+
+    sections.append("### Executive Summary")
+    sections.extend([f"- {item}" for item in (summary_lines or evidence_lines or ["The uploaded document was loaded, but the extracted text is too thin for a stronger summary."])])
+    sections.append("")
+    sections.append("### Key Evidence")
+    sections.extend([f"- {item}" for item in (evidence_lines or ["No explicit metric or evidence lines were reliably extracted from the document text."])])
+    sections.append("")
+    sections.append("### Watchouts")
+    sections.extend([f"- {item}" for item in (watchout_lines or ["No explicit risk or downside language was detected in the extracted content."])])
+    return "\n".join(sections)
+
+
 def _request_openrouter_completion(headers, messages, query="", context_text="", history=None, tools=None, tool_choice=None, temperature=0.4, max_tokens=None):
     requested_tokens = max_tokens or _choose_response_token_budget(query, context_text, history)
     payload = {
@@ -238,6 +336,77 @@ def _split_context_items(value, limit=8):
     return items
 
 
+def _normalize_profile_url(value):
+    text = str(value or "").strip().strip("()[]{}<>,;")
+    if text.lower().startswith("www."):
+        text = "https://" + text
+    if not re.match(r"^https?://", text, re.IGNORECASE):
+        return ""
+    return text
+
+
+def _detect_profile_platform(url):
+    host = urlparse(str(url or "")).netloc.lower().strip()
+    if host.startswith("www."):
+        host = host[4:]
+    if host.endswith("linkedin.com"):
+        return "linkedin"
+    if host.endswith("github.com"):
+        return "github"
+    return "general"
+
+
+def _extract_direct_profile_links(context_text):
+    grouped = {"linkedin": [], "github": [], "general": []}
+    seen = set()
+    for match in re.finditer(r"https?://[^\s<>'\")\]]+", str(context_text or ""), re.IGNORECASE):
+        href = _normalize_profile_url(match.group(0))
+        if not href:
+            continue
+        key = href.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        grouped[_detect_profile_platform(href)].append(href)
+    return grouped
+
+
+def _build_direct_osint_results(platform, profile):
+    direct_profiles = profile.get("direct_profiles") or {}
+    urls = list(direct_profiles.get(platform) or [])
+    results = []
+    for href in urls[:3]:
+        path = urlparse(href).path.strip("/")
+        path_tokens = _tokenize_text(path.replace("-", " ").replace("_", " ").replace("/", " "))
+        signals = ["embedded in resume", f"{platform} domain"]
+        score = 92
+
+        if profile.get("first_name") and profile["first_name"] in path_tokens:
+            score += 4
+            signals.append("first-name path hint")
+        if profile.get("surname") and profile["surname"] in path_tokens:
+            score += 6
+            signals.append("surname path hint")
+        if platform == "linkedin" and ("/in/" in href.lower() or "/pub/" in href.lower()):
+            score += 4
+            signals.append("profile path")
+        if platform == "github" and path and path.count("/") <= 1:
+            score += 4
+            signals.append("handle path")
+
+        results.append({
+            "title": f"Direct {platform.title()} profile from resume",
+            "href": href,
+            "snippet": "Direct profile link extracted from the uploaded resume/PDF.",
+            "score": min(score, 99),
+            "confidence": "high",
+            "matched_signals": signals[:5],
+            "reasons": [],
+            "query_used": "resume_embedded_profile",
+        })
+    return results
+
+
 def _extract_osint_profile(context_text, fallback_name=""):
     profile = {
         "name": _clean_context_value(fallback_name),
@@ -247,6 +416,7 @@ def _extract_osint_profile(context_text, fallback_name=""):
         "companies": [],
         "skills": [],
         "resume_excerpt": "",
+        "direct_profiles": {"linkedin": [], "github": [], "general": []},
     }
 
     for line in str(context_text or "").splitlines():
@@ -272,6 +442,8 @@ def _extract_osint_profile(context_text, fallback_name=""):
             profile["skills"] = _split_context_items(value, limit=8)
         elif key in {"resume excerpt", "summary"}:
             profile["resume_excerpt"] = value[:240]
+
+    profile["direct_profiles"] = _extract_direct_profile_links(context_text)
 
     if profile["email"]:
         local_part, _, domain = profile["email"].partition("@")
@@ -434,8 +606,29 @@ def _score_osint_result(result, platform, profile):
 def _run_osint_trace(target_name, platform, supporting_context):
     profile = _extract_osint_profile(supporting_context, fallback_name=target_name)
     queries = _build_osint_queries(target_name, platform, profile)
+    ranked = {}
+
+    for direct_result in _build_direct_osint_results(platform, profile):
+        ranked[direct_result["href"]] = direct_result
 
     if not DDGS_AVAILABLE:
+        if ranked:
+            ordered = sorted(ranked.values(), key=lambda row: row["score"], reverse=True)
+            return {
+                "platform": platform,
+                "target_name": profile.get("name") or target_name,
+                "status": "strong_match",
+                "message": "Direct profile link extracted from the uploaded resume.",
+                "queries": queries,
+                "identity_hints": {
+                    key: profile[key]
+                    for key in ("email", "location", "role")
+                    if profile.get(key)
+                },
+                "top_results": ordered[:3],
+                "rejected_examples": [],
+                "result_count": len(ordered),
+            }
         return {
             "platform": platform,
             "target_name": profile.get("name") or target_name,
@@ -456,7 +649,6 @@ def _run_osint_trace(target_name, platform, supporting_context):
             except Exception:
                 continue
 
-    ranked = {}
     for item in collected:
         scored = _score_osint_result(item, platform, profile)
         if not scored["href"]:
@@ -490,6 +682,14 @@ def _run_osint_trace(target_name, platform, supporting_context):
         identity_hints["companies"] = profile["companies"][:2]
     if profile.get("skills"):
         identity_hints["skills"] = profile["skills"][:4]
+    direct_profile_links = (profile.get("direct_profiles") or {}).get(platform) or []
+    if direct_profile_links:
+        identity_hints["direct_profiles"] = direct_profile_links[:3]
+
+    if direct_profile_links and top_results:
+        if any(result.get("query_used") == "resume_embedded_profile" for result in top_results):
+            status = "strong_match"
+            message = "Direct profile link extracted from the uploaded resume."
 
     return {
         "platform": platform,
@@ -507,11 +707,16 @@ def _run_osint_trace(target_name, platform, supporting_context):
 def build_osint_bundle(target_name, context_text):
     profile = _extract_osint_profile(context_text, fallback_name=target_name)
     platforms = [_run_osint_trace(profile.get("name") or target_name, platform, context_text) for platform in ("linkedin", "github", "general")]
+    direct_profile_rows = []
+    for platform_name, urls in (profile.get("direct_profiles") or {}).items():
+        for href in urls[:3]:
+            direct_profile_rows.append({"platform": platform_name, "href": href})
 
     strong_matches = sum(1 for item in platforms if item.get("status") == "strong_match")
     possible_matches = sum(1 for item in platforms if item.get("status") == "possible_match")
     top_results = sum(len(item.get("top_results") or []) for item in platforms)
     rejected = sum(len(item.get("rejected_examples") or []) for item in platforms)
+    direct_profile_count = len(direct_profile_rows)
 
     if strong_matches >= 2:
         overall_status = "verified_presence"
@@ -533,6 +738,12 @@ def build_osint_bundle(target_name, context_text):
         confidence = "low"
         headline = "No high-confidence public footprint found."
         detail = "Searches were executed, but the evidence did not meet the confidence threshold for a reliable match."
+
+    if direct_profile_count:
+        detail = (
+            f"{direct_profile_count} direct profile link"
+            f"{'s were' if direct_profile_count != 1 else ' was'} extracted from the uploaded resume and folded into the trace."
+        )
 
     next_steps = []
     if not profile.get("email"):
@@ -557,6 +768,7 @@ def build_osint_bundle(target_name, context_text):
             "role": profile.get("role", ""),
             "companies": profile.get("companies", []),
             "skills": profile.get("skills", [])[:8],
+            "direct_profiles": direct_profile_rows[:6],
         },
         "summary": {
             "status": overall_status,
@@ -567,6 +779,7 @@ def build_osint_bundle(target_name, context_text):
             "reviewed_results": sum(item.get("result_count", 0) for item in platforms),
             "top_results": top_results,
             "rejected_results": rejected,
+            "direct_profiles": direct_profile_count,
         },
         "platforms": platforms,
         "next_steps": next_steps[:4],
@@ -1058,7 +1271,8 @@ def run_openrouter_chat(messages, temperature=0.2, max_tokens=None):
 def stream_financial_answer(query, context_text, api_key_ignored=None, history=None, interview_mode=False, analysis_mode="financial"):
     active_api_key = str(HARDCODED_API_KEY or "").strip()
     if not active_api_key:
-        raise RuntimeError("OpenRouter is not configured on the server.")
+        yield {"type": "delta", "content": _build_local_financial_fallback_answer(query, context_text, "OpenRouter is not configured on the server.")}
+        return
 
     context_mode = _infer_document_analysis_mode(context_text)
     normalized_mode = "resume" if str(analysis_mode or "").strip().lower() == "resume" else "financial"
@@ -1090,10 +1304,10 @@ def stream_financial_answer(query, context_text, api_key_ignored=None, history=N
             max_tokens=response_budget,
         ):
             yield {"type": "delta", "content": chunk}
-    except RuntimeError:
-        raise
+    except RuntimeError as exc:
+        yield {"type": "delta", "content": _build_local_financial_fallback_answer(query, optimized_context_text, str(exc))}
     except Exception as exc:
-        raise RuntimeError(f"> **Unexpected Error**: {str(exc)}") from exc
+        yield {"type": "delta", "content": _build_local_financial_fallback_answer(query, optimized_context_text, f"> **Unexpected Error**: {str(exc)}")}
 
 
 def get_candidate_scorecard(query, context_text, history=None, interview_mode=False, analysis_mode="resume"):
@@ -1167,7 +1381,7 @@ def get_candidate_scorecard(query, context_text, history=None, interview_mode=Fa
 def get_financial_answer(query, context_text, api_key_ignored=None, history=None, interview_mode=False, analysis_mode="financial"):
     active_api_key = str(HARDCODED_API_KEY or "").strip()
     if not active_api_key:
-        return "OpenRouter is not configured on the server."
+        return _build_local_financial_fallback_answer(query, context_text, "OpenRouter is not configured on the server.")
 
     normalized_mode = "resume" if str(analysis_mode or "").strip().lower() == "resume" else "financial"
     context_mode = _infer_document_analysis_mode(context_text)
@@ -1200,6 +1414,6 @@ def get_financial_answer(query, context_text, api_key_ignored=None, history=None
         message = result["choices"][0].get("message", {})
         return _extract_message_text(message)
     except RuntimeError as exc:
-        return str(exc)
+        return _build_local_financial_fallback_answer(query, optimized_context_text, str(exc))
     except Exception as exc:
-        return f"> **Unexpected Error**: {str(exc)}"
+        return _build_local_financial_fallback_answer(query, optimized_context_text, f"> **Unexpected Error**: {str(exc)}")

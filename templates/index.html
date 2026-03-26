@@ -1723,9 +1723,9 @@
             height:100%;
             align-items:stretch;
             grid-template-columns:360px 1fr;
-            border:1px solid rgba(255,255,255,.07);
+            border:none;
             border-radius:30px;
-            background:rgba(24,27,31,.78);
+            background:linear-gradient(180deg, rgba(26,29,34,.88), rgba(18,20,24,.96));
             box-shadow:0 28px 60px rgba(0,0,0,.24);
         }
         .scanner-form {
@@ -1734,7 +1734,12 @@
             gap:18px;
             padding:22px;
             overflow-y:auto;
+            border-right:none;
             background:linear-gradient(180deg, rgba(34,37,42,.94), rgba(29,32,37,.99));
+            box-shadow:inset -1px 0 0 rgba(255,255,255,.04);
+        }
+        .analytics-pane {
+            background:linear-gradient(180deg, rgba(20,22,27,.96), rgba(15,17,21,.99));
         }
         .scanner-panel,
         .scanner-step-card,
@@ -1777,6 +1782,55 @@
         }
         .scanner-hero::after {
             display:none;
+        }
+        .dossier-grid {
+            display:flex;
+            flex-direction:column;
+            gap:16px;
+            padding:16px;
+            min-height:100%;
+            background:transparent;
+        }
+        .dossier-sidebar {
+            display:grid;
+            grid-template-columns:minmax(220px, 240px) minmax(0, 1fr);
+            gap:16px;
+            align-items:stretch;
+        }
+        .dossier-main {
+            gap:14px;
+        }
+        .analytics-pane .card {
+            border-color:rgba(255,255,255,.06);
+            background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.012));
+            box-shadow:none;
+        }
+        .analytics-pane .card:hover {
+            border-color:rgba(255,255,255,.08);
+        }
+        .analytics-pane .card-header-bar {
+            border-bottom:none;
+            padding-bottom:4px;
+        }
+        .analytics-pane .card-body-pad {
+            padding-top:12px;
+        }
+        .analytics-pane .data-table td {
+            border-bottom:none;
+            padding:8px 0;
+        }
+        .analytics-pane .data-table tr + tr td {
+            padding-top:12px;
+        }
+        .analytics-pane .viz-card::before,
+        .analytics-pane .scanner-panel::after,
+        .analytics-pane .scanner-step-card::after {
+            opacity:.45;
+        }
+        @media (max-width:1100px) {
+            .dossier-sidebar {
+                grid-template-columns:1fr;
+            }
         }
         .scanner-kicker,
         .chat-rail-kicker,
@@ -1978,6 +2032,21 @@
             padding:48px;
             text-align:center;
         }
+        .analytics-loading-state {
+            flex:1;
+            width:100%;
+            min-height:100%;
+            box-sizing:border-box;
+            position:relative;
+            z-index:1;
+            display:flex;
+            flex-direction:column;
+            align-items:center;
+            justify-content:center;
+            gap:16px;
+            padding:48px;
+            text-align:center;
+        }
         .analytics-empty-orbit,
         .analytics-empty-state > div:first-child {
             position:relative;
@@ -2089,11 +2158,23 @@
         }
         .chat-history-wrap { padding:6px; }
         .chat-history-list { display:flex; flex-direction:column; gap:6px; }
+        .history-item-row {
+            display:grid;
+            grid-template-columns:minmax(0, 1fr) auto;
+            gap:8px;
+            align-items:stretch;
+        }
         .history-item {
+            min-width:0;
             padding:12px 14px;
             border-radius:16px;
             border:1px solid transparent;
             background:linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,.008));
+        }
+        .history-item-text {
+            overflow:hidden;
+            text-overflow:ellipsis;
+            white-space:nowrap;
         }
         .history-item:hover {
             border-color:var(--border);
@@ -2102,6 +2183,25 @@
         .history-item.active {
             border-color:rgba(138,180,248,.22);
             box-shadow:0 12px 24px rgba(0,0,0,.14);
+        }
+        .history-item-delete {
+            width:42px;
+            min-width:42px;
+            border:none;
+            border-radius:16px;
+            display:inline-flex;
+            align-items:center;
+            justify-content:center;
+            background:rgba(255,255,255,.03);
+            border:1px solid rgba(255,255,255,.06);
+            color:var(--text-3);
+            transition:background var(--transition), border-color var(--transition), color var(--transition), transform var(--transition);
+        }
+        .history-item-delete:hover {
+            color:var(--accent-err);
+            border-color:rgba(242,139,130,.22);
+            background:rgba(242,139,130,.08);
+            transform:translateY(-1px);
         }
         .chat-main {
             position:relative;
@@ -2365,6 +2465,15 @@
         }
         .chat-suggestion-head {
             display:flex;
+            align-items:flex-start;
+            justify-content:space-between;
+            gap:12px;
+            flex-wrap:wrap;
+        }
+        .chat-suggestion-copy {
+            display:flex;
+            flex:1;
+            min-width:0;
             flex-direction:column;
             align-items:flex-start;
             gap:8px;
@@ -2374,6 +2483,30 @@
             font-weight:700;
             letter-spacing:.14em;
             text-transform:uppercase;
+            color:var(--accent);
+        }
+        .chat-suggestion-toggle {
+            display:inline-flex;
+            align-items:center;
+            justify-content:center;
+            align-self:flex-start;
+            min-height:34px;
+            padding:0 12px;
+            border-radius:999px;
+            border:1px solid rgba(255,255,255,.08);
+            background:rgba(255,255,255,.035);
+            color:var(--text-2);
+            font-size:.76rem;
+            font-weight:600;
+            transition:background var(--transition), border-color var(--transition), color var(--transition), transform var(--transition);
+        }
+        .chat-suggestion-toggle:hover {
+            color:var(--text-1);
+            border-color:rgba(138,180,248,.22);
+            background:rgba(138,180,248,.08);
+            transform:translateY(-1px);
+        }
+        .chat-suggestion-toggle[aria-expanded="false"] {
             color:var(--accent);
         }
         .chat-suggestion-note {
@@ -2395,6 +2528,12 @@
             flex-wrap:wrap;
             gap:10px;
             align-items:flex-start;
+        }
+        .chat-suggestion-strip.is-collapsed {
+            gap:8px;
+        }
+        .chat-suggestion-strip.is-collapsed .chat-suggestion-chips {
+            display:none;
         }
         .chat-suggestion-chip {
             border:none;
@@ -2953,6 +3092,7 @@
         }
         @media (max-width:768px) {
             .analytics-empty-state { min-height:320px; padding:38px 24px; }
+            .analytics-loading-state { min-height:320px; padding:38px 24px; }
             .analytics-empty-title { font-size:1.55rem; }
             .msg { max-width:100%; }
             .split-grid-2 { grid-template-columns:1fr; }
@@ -3015,6 +3155,7 @@
         [data-theme="light"] .chat-workspace-toggle,
         [data-theme="light"] .chat-mode-toggle,
         [data-theme="light"] .chat-suggestion-chip,
+        [data-theme="light"] .chat-suggestion-toggle,
         [data-theme="light"] .chat-score-row,
         [data-theme="light"] .chat-score-list-block,
         [data-theme="light"] .chat-score-badge {
@@ -3036,6 +3177,99 @@
         [data-theme="light"] .chat-suggestion-note {
             border-color:rgba(26,115,232,.14);
             background:rgba(26,115,232,.08);
+        }
+        @media (min-width:1200px) {
+            html { font-size:15px; }
+            :root {
+                --sidebar-w:244px;
+                --topbar-h:56px;
+            }
+            .brand { padding:16px 14px 14px; }
+            .nav-group { padding:6px; }
+            .nav-btn { gap:10px; padding:9px 11px; }
+            .sidebar-footer { padding:6px; }
+            .topbar { padding:0 18px; gap:10px; }
+            .topbar-chip { padding:5px 10px; font-size:.76rem; }
+            .btn { padding:8px 16px; }
+            .btn-sm { padding:5px 12px; }
+            .btn-icon { width:34px; height:34px; }
+            .card-header-bar { padding:12px 16px; }
+            .card-body-pad { padding:16px; }
+            #resume-view,
+            #finance-view,
+            #leaderboard-view,
+            #fin-dashboard-view { padding:14px; }
+            #scanner-screen { border-radius:26px; }
+            .scanner-grid { grid-template-columns:340px 1fr; border-radius:26px; }
+            .scanner-form { gap:14px; padding:18px; }
+            .scanner-panel { gap:12px; padding:16px 16px 18px; border-radius:20px; }
+            .scanner-step-card,
+            .chat-rail-card,
+            .chat-system-card { border-radius:20px; }
+            .scanner-title { font-size:1.34rem; }
+            .scanner-sub,
+            .scanner-step-copy,
+            .scanner-cta-note,
+            .upload-sub,
+            .chat-drop-sub { font-size:.8rem; }
+            .scanner-status-bar { padding:10px 12px; border-radius:16px; }
+            .scanner-badge,
+            .analytics-pill,
+            .chat-file-status,
+            .chat-rail-stat { min-height:38px; padding:7px 10px; }
+            .scanner-workbench { gap:12px; padding:14px; border-radius:22px; }
+            .scanner-step-card { gap:12px; padding:16px; }
+            .scanner-form .textarea-input { min-height:136px; }
+            .upload-zone,
+            .drop-zone-chat { padding:18px; border-radius:18px; }
+            .upload-icon,
+            .chat-drop-icon,
+            .drop-zone-chat > div:first-child { font-size:32px !important; }
+            .upload-title,
+            .chat-drop-title { font-size:.96rem; }
+            .scanner-cta { padding:12px 14px !important; border-radius:16px; }
+            .analytics-empty-state,
+            .analytics-loading-state { padding:40px; }
+            .chat-layout { grid-template-columns:264px 1fr; }
+            .chat-sidebar { gap:10px; padding:14px; }
+            .chat-rail-card { padding:16px; }
+            .chat-empty-state { padding:20px 12px !important; }
+            .history-item { padding:10px 12px; border-radius:14px; }
+            .chat-header-bar { padding:14px 18px; }
+            .chat-header-meta,
+            .chat-header-actions { gap:10px; }
+            .chat-status-dot {
+                width:9px;
+                height:9px;
+                box-shadow:0 0 0 5px rgba(129,201,149,.11), 0 0 14px rgba(129,201,149,.28);
+            }
+            .chat-header-name { font-size:.96rem; }
+            .chat-workspace-toggle,
+            .chat-mode-toggle { gap:4px; padding:4px; }
+            .chat-workspace-btn,
+            .chat-mode-btn { min-height:34px; padding:0 14px; font-size:.78rem; }
+            .chat-messages { gap:14px; padding:18px; }
+            .msg { padding:12px 15px; border-radius:18px; }
+            .chat-welcome-title { font-size:1.16rem; }
+            .chat-welcome-copy { margin-top:10px; font-size:.84rem; line-height:1.68; }
+            .chat-welcome-grid { gap:10px; margin-top:14px; }
+            .chat-welcome-item { padding:12px; border-radius:16px; font-size:.8rem; }
+            .chat-footer { gap:12px; padding:14px 18px 18px; }
+            .chat-suggestion-strip { gap:10px; padding:12px 14px; border-radius:18px; }
+            .chat-suggestion-toggle { min-height:30px; padding:0 11px; font-size:.72rem; }
+            .chat-suggestion-note { padding:5px 10px; font-size:.72rem; }
+            .chat-suggestion-chip { padding:8px 12px; font-size:.78rem; }
+            .chat-composer-row { gap:10px; padding:8px; border-radius:20px; }
+            .chat-input-shell { min-height:50px; padding:3px 5px; border-radius:16px; }
+            .chat-input { padding:12px 14px; }
+            .chat-composer-actions { gap:8px; }
+            .chat-composer-actions .btn { min-width:84px; min-height:40px; }
+            .pool-overview { padding:24px; border-radius:24px; }
+            .pool-overview-title { font-size:1.72rem; }
+            .pool-overview-copy { font-size:.88rem; }
+            .pool-spotlight { padding:16px; border-radius:18px; }
+            .pool-metric-grid { gap:12px; margin-top:20px; }
+            .pool-metric-card { min-height:108px; padding:16px; border-radius:18px; }
         }
         @media (max-width:960px) {
             .scanner-form {
@@ -3775,10 +4009,13 @@
                         </div>
                     </div>
                     <div class="chat-footer">
-                        <div class="chat-suggestion-strip">
+                        <div class="chat-suggestion-strip" id="chat-suggestion-strip">
                             <div class="chat-suggestion-head">
-                                <div class="chat-suggestion-kicker">Quick Prompts</div>
-                                <div class="chat-suggestion-note" id="chat-suggestion-note">Load a document to unlock context-aware prompts.</div>
+                                <div class="chat-suggestion-copy">
+                                    <div class="chat-suggestion-kicker">Quick Prompts</div>
+                                    <div class="chat-suggestion-note" id="chat-suggestion-note">Load a document to unlock context-aware prompts.</div>
+                                </div>
+                                <button type="button" class="chat-suggestion-toggle" id="chat-suggestion-toggle" aria-controls="chat-suggestion-chips" aria-expanded="false" onclick="toggleChatQuickPrompts()">Show</button>
                             </div>
                             <div id="chat-suggestion-chips" class="chat-suggestion-chips"></div>
                         </div>
@@ -4356,8 +4593,8 @@
         const editorNote=document.getElementById('profile-editor-note');
         if(editorNote){
             editorNote.textContent=state.rawEmail
-                ? `Signed in as ${state.rawEmail}. Your login email stays managed by your authentication method, while the professional contact email above is optional and editable.`
-                : 'Guest profile changes are stored in your current session until you sign in.';
+                ? `Signed in as ${state.rawEmail}. Your uploaded documents, saved candidate dossiers, and chat history now stay linked to this account, while the professional contact email above remains optional and editable.`
+                : 'Guest workspace changes are temporary for this visit only. Sign in to keep uploaded documents, saved dossiers, and chat history.';
         }
     }
     function syncProfileEditorFields(){
@@ -4639,7 +4876,77 @@
     }
 
     // â”€â”€ api key â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    function getCacheKey(name){ if(!name)return'dossier_unknown'; return'dossier_'+name.trim().toLowerCase().replace(/[^a-z0-9]/g,'_'); }
+    const GUEST_CACHE_SCOPE = `guest_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    function getWorkspaceUserEmail(){
+        return String(APP_USER?.email || '').trim().toLowerCase();
+    }
+    function isWorkspaceSyncedUser(){
+        return !!getWorkspaceUserEmail();
+    }
+    function getWorkspaceCacheStorage(){
+        return isWorkspaceSyncedUser() ? localStorage : sessionStorage;
+    }
+    function getWorkspaceCacheScope(){
+        const email=getWorkspaceUserEmail();
+        return email ? `user_${email.replace(/[^a-z0-9]/g,'_')}` : GUEST_CACHE_SCOPE;
+    }
+    function getCacheKey(name){
+        if(!name) return `dossier_${getWorkspaceCacheScope()}_unknown`;
+        return `dossier_${getWorkspaceCacheScope()}_${name.trim().toLowerCase().replace(/[^a-z0-9]/g,'_')}`;
+    }
+    function getCachedDossier(name){
+        try{
+            const raw=getWorkspaceCacheStorage().getItem(getCacheKey(name));
+            return raw ? JSON.parse(raw) : null;
+        }catch(err){
+            console.error(err);
+            return null;
+        }
+    }
+    function cacheDossier(aiData){
+        const extracted=aiData?.extracted_data || {};
+        const cacheName=extracted.name || aiData?.fileName || 'unknown';
+        try{
+            getWorkspaceCacheStorage().setItem(getCacheKey(cacheName), JSON.stringify(aiData));
+        }catch(err){
+            console.warn("Cache full");
+        }
+    }
+    function clearCachedDossier(name){
+        const scopedKey=getCacheKey(name);
+        try{ localStorage.removeItem(scopedKey); }catch(err){}
+        try{ sessionStorage.removeItem(scopedKey); }catch(err){}
+    }
+    function clearAllScopedDossiers(){
+        const prefix=`dossier_${getWorkspaceCacheScope()}_`;
+        [localStorage, sessionStorage].forEach(storage=>{
+            try{
+                const keys=[];
+                for(let i=0;i<storage.length;i++){
+                    const key=storage.key(i);
+                    if(key && key.startsWith(prefix)) keys.push(key);
+                }
+                keys.forEach(key=>storage.removeItem(key));
+            }catch(err){}
+        });
+    }
+    function getCandidateStoredDossier(candidate){
+        if(!candidate || typeof candidate!=='object') return null;
+        if(Object.prototype.hasOwnProperty.call(candidate, '_dossierCache')) return candidate._dossierCache;
+        let cached=null;
+        if(candidate.dossier_data && typeof candidate.dossier_data==='object'){
+            cached=candidate.dossier_data;
+        } else if(candidate.dossier_json){
+            try{
+                cached=typeof candidate.dossier_json==='string' ? JSON.parse(candidate.dossier_json) : candidate.dossier_json;
+            }catch(err){
+                console.error(err);
+            }
+        }
+        if(!cached) cached=getCachedDossier(candidate.name);
+        candidate._dossierCache=cached && typeof cached==='object' ? cached : null;
+        return candidate._dossierCache;
+    }
 
     // â”€â”€ chart state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     let skillRadarChart=null, skillBarChart=null, finBarChart=null, finDoughnutChart=null, dbComparisonRadarChart=null, dbComparisonScoreChart=null;
@@ -4869,6 +5176,7 @@
         }
         fetchLeaderboard();
         initializeChatBoard();
+        restorePersistedChatSessions();
     });
 
     // â”€â”€ process chat file â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -4904,10 +5212,8 @@
         try{
             const lowerName=file.name.toLowerCase();
             if(file.type==="application/pdf"||lowerName.endsWith('.pdf')){
-                if(typeof window.pdfjsLib==='undefined')throw new Error("PDF.js failed to load.");
-                const ab=await file.arrayBuffer();
-                const pdf=await window.pdfjsLib.getDocument({data:new Uint8Array(ab),cMapUrl:'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',cMapPacked:true,useSystemFonts:true}).promise;
-                for(let i=1;i<=pdf.numPages;i++){const p=await pdf.getPage(i);const c=await p.getTextContent();textContent+=`--- Page ${i} ---\n`+c.items.map(item=>item.str).join(' ')+"\n\n";if(textContent.length>MAX_CHARS)break;}
+                const pdfBundle=await extractPdfTextBundle(file, MAX_CHARS, true);
+                textContent=pdfBundle.text;
             } else {
                 textContent=await new Promise(r=>{const rdr=new FileReader();rdr.onload=e=>r(e.target.result);rdr.readAsText(file);});
             }
@@ -5706,10 +6012,8 @@ ${session.context.substring(0,9000)}`;
         let t="";
         try{
             if(file.type==="application/pdf"||file.name.endsWith('.pdf')){
-                if(typeof window.pdfjsLib==='undefined') throw new Error("PDF.js offline.");
-                const ab=await file.arrayBuffer();
-                const pdf=await window.pdfjsLib.getDocument({data:new Uint8Array(ab),cMapUrl:'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',cMapPacked:true,useSystemFonts:true}).promise;
-                for(let i=1;i<=pdf.numPages;i++){const p=await pdf.getPage(i);const c=await p.getTextContent();t+=c.items.map(item=>item.str).join(' ')+" \n";}
+                const pdfBundle=await extractPdfTextBundle(file, 120000, false);
+                t=pdfBundle.text;
             } else {t=await new Promise((res,rej)=>{const r=new FileReader();r.onload=e=>res(e.target.result);r.onerror=e=>rej(e);r.readAsText(file);});}
             if(!t||t.trim().length<5) throw new Error("Text layer missing.");
             return t;
@@ -5739,7 +6043,7 @@ ${session.context.substring(0,9000)}`;
             return;
         }
         const files=Array.from(fi.files); window.candidatesRanking=[];
-        output.innerHTML=`<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:16px;padding:40px;text-align:center">
+        output.innerHTML=`<div class="analytics-loading-state">
             <div class="spinner" style="width:36px;height:36px;border-width:3px"></div>
             <div style="font-size:1rem;font-weight:600;color:var(--text-1)">Analysing resumes...</div>
             <div class="mobile-progress"><div id="scan-progress-fill" style="height:100%;width:0%;background:var(--accent);border-radius:99px;transition:width .3s"></div></div>
@@ -5754,9 +6058,21 @@ ${session.context.substring(0,9000)}`;
             let ext=aiData.extracted_data||{};
             if(!ext.name||ext.name.trim()===""||ext.name==="UNKNOWN"||ext.name==="Candidate Name") ext.name=files[i].name.replace(/\.[^/.]+$/,"");
             aiData.extracted_data=ext;
-            try{await fetch(API_BASE + '/save_candidate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jd_text:jd,candidate_data:ext,analysis_data:aiData.analysis||{}})});}catch(e){console.error("DB save:",e);}
-            try{localStorage.setItem(getCacheKey(ext.name),JSON.stringify(aiData));}catch(e){console.warn("Cache full");}
             aiData.fileName=files[i].name; aiData.resumeText=rt;
+            try{
+                await fetch(API_BASE + '/save_candidate',{
+                    method:'POST',
+                    headers:{'Content-Type':'application/json'},
+                    body:JSON.stringify({
+                        jd_text:jd,
+                        candidate_data:ext,
+                        analysis_data:aiData.analysis||{},
+                        dossier_data:aiData,
+                        resume_text:rt
+                    })
+                });
+            }catch(e){console.error("DB save:",e);}
+            cacheDossier(aiData);
             window.candidatesRanking.push(aiData);
         }
         document.getElementById('scan-progress-fill').style.width='100%';
@@ -5814,9 +6130,9 @@ ${session.context.substring(0,9000)}`;
         const scoreColor=score>=80?'var(--accent-2)':score>=50?'var(--accent-warn)':'var(--accent-err)';
         const chips=(arr,cls)=>(arr?.length>0)?arr.map(s=>`<span class="chip ${cls}">${s}</span>`).join(''):`<span style="color:var(--text-3);font-size:.82rem">-</span>`;
         const li=(arr)=>(arr?.length>0)?`<ul style="padding-left:16px;color:var(--text-2);font-size:.85rem">${arr.map(i=>`<li style="margin-bottom:3px">${i}</li>`).join('')}</ul>`:`<span style="color:var(--text-3);font-size:.82rem">-</span>`;
-        const edu=Array.isArray(ext.education)?ext.education.join(', '):(ext.education||'N/A');
+        const edu=normalizeCandidateEducation(ext.education) || 'Not clearly stated';
         const phone=Array.isArray(ext.phone)?ext.phone.join(', '):(ext.phone||'N/A');
-        const loc=Array.isArray(ext.location)?ext.location.join(', '):(ext.location||'N/A');
+        const loc=normalizeCandidateLocation(ext.location) || 'Unknown';
         const intel={
             target_role:safeText(intelRaw.target_role, Array.isArray(ext.job_titles)?ext.job_titles[0]:(ext.job_titles||'Target role not detected')),
             fit_band:safeText(intelRaw.fit_band, score>=80?'High alignment':score>=65?'Strong but needs validation':score>=50?'Mixed alignment':'Low alignment'),
@@ -5871,7 +6187,7 @@ ${session.context.substring(0,9000)}`;
         // Score ring SVG
         const r=44,circ=2*Math.PI*r,fill=circ*(score/100);
         const ringColor=scoreColor;
-        output.innerHTML=`<div class="dossier-grid" style="background:var(--bg);min-height:100%;overflow-y:auto">
+        output.innerHTML=`<div class="dossier-grid" style="min-height:100%">
             ${backBtn}
             <div class="dossier-sidebar">
                 <!-- Score -->
@@ -6023,6 +6339,7 @@ ${session.context.substring(0,9000)}`;
         const traceRoles=Array.isArray(ext.job_titles)?ext.job_titles.join(', '):(ext.job_titles||'Unknown');
         const traceCompanies=Array.isArray(ext.companies)?ext.companies.join(', '):(ext.companies||'Unknown');
         const traceSkills=(a.matched_skills?.length?a.matched_skills:(Array.isArray(ext.skills)?ext.skills:(ext.skills?[ext.skills]:[]))).join(', ')||'Unknown';
+        const traceDirectProfiles=extractProfileLinksFromText(aiData.resumeText||window.currentResumeText||'');
         const traceContext=[
             'Candidate OSINT Fingerprint',
             `Name: ${traceName||'Unknown'}`,
@@ -6031,6 +6348,7 @@ ${session.context.substring(0,9000)}`;
             `Roles: ${traceRoles}`,
             `Companies: ${traceCompanies}`,
             `Skills: ${traceSkills}`,
+            `Direct profiles: ${traceDirectProfiles.length ? traceDirectProfiles.map(item=>`${item.platform}: ${item.url}`).join(' | ') : 'Unavailable'}`,
             `Resume excerpt: ${(aiData.resumeText||window.currentResumeText||'').replace(/\s+/g,' ').trim().substring(0,500)||'Unavailable'}`
         ].join('\n');
         if(traceName){
@@ -6270,6 +6588,119 @@ ${session.context.substring(0,9000)}`;
         const text=String(value ?? '').trim();
         return text || fallback;
     }
+    function normalizeExtractedUrl(value){
+        let text=String(value || '').trim();
+        if(!text) return '';
+        text=text.replace(/[)\]}>.,;]+$/,'');
+        if(/^www\./i.test(text)) text=`https://${text}`;
+        return /^https?:\/\//i.test(text) ? text : '';
+    }
+    function getProfilePlatformLabel(url){
+        try{
+            const host=new URL(String(url || '')).hostname.toLowerCase().replace(/^www\./,'');
+            if(host.endsWith('linkedin.com')) return 'LinkedIn';
+            if(host.endsWith('github.com')) return 'GitHub';
+            return 'Web';
+        }catch(err){
+            return 'Web';
+        }
+    }
+    function dedupeUrls(values){
+        const seen=new Set();
+        const out=[];
+        (values||[]).forEach(value=>{
+            const clean=normalizeExtractedUrl(value);
+            const key=clean.toLowerCase();
+            if(clean && !seen.has(key)){
+                seen.add(key);
+                out.push(clean);
+            }
+        });
+        return out;
+    }
+    function appendDirectProfileLinksToText(text, urls){
+        const links=dedupeUrls(urls);
+        const base=String(text || '').trim();
+        if(!links.length) return base;
+        const linkLines=links.map(url=>`${getProfilePlatformLabel(url)}: ${url}`);
+        return `${base}${base ? '\n\n' : ''}Direct profile links:\n${linkLines.join('\n')}`.trim();
+    }
+    function extractProfileLinksFromText(text){
+        const matches=String(text || '').match(/https?:\/\/[^\s<>"')\]}]+/gi) || [];
+        return dedupeUrls(matches).map(url=>({platform:getProfilePlatformLabel(url), url}));
+    }
+    async function extractPdfTextBundle(file, maxChars=120000, includePageLabels=false){
+        if(typeof window.pdfjsLib==='undefined') throw new Error("PDF.js failed to load.");
+        const ab=await file.arrayBuffer();
+        const pdf=await window.pdfjsLib.getDocument({data:new Uint8Array(ab),cMapUrl:'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/cmaps/',cMapPacked:true,useSystemFonts:true}).promise;
+        let text='';
+        const links=[];
+        for(let i=1;i<=pdf.numPages;i++){
+            const page=await pdf.getPage(i);
+            const content=await page.getTextContent();
+            text+=`${includePageLabels ? `--- Page ${i} ---\n` : ''}${content.items.map(item=>item.str).join(' ')}\n\n`;
+            try{
+                const annotations=await page.getAnnotations();
+                annotations.forEach(annotation=>{
+                    const href=normalizeExtractedUrl(annotation?.url || annotation?.unsafeUrl || '');
+                    if(href) links.push(href);
+                });
+            }catch(err){
+                console.error('PDF annotation extraction failed:', err);
+            }
+            if(text.length > maxChars) break;
+        }
+        return {
+            text:appendDirectProfileLinksToText(text.slice(0, maxChars), links),
+            links:dedupeUrls(links)
+        };
+    }
+    const candidateFieldTechPattern=/\b(?:python|sql|tensorflow|keras|scikit|opencv|densenet|flask|numpy|pandas|excel|vlookup|xlookup|power bi|tableau|mysql|sqlite|snowflake|aws|cnn|machine learning|deep learning|dashboard|analysis|engineering|backend|frontend|recommendation|attendance|system)\b/i;
+    const candidateFieldEducationPattern=/\b(?:integrated\s+)?(?:b\.?\s*tech|m\.?\s*tech|b\.?\s*sc|m\.?\s*sc|b\.?\s*ca|m\.?\s*ca|b\.?\s*com|m\.?\s*com|b\.e\.|m\.e\.|bachelor|master|mba|ph\.?\s*d|doctorate|diploma|university|college|institute|school|academy|department|faculty|campus|specialization|major|minor|coursework|semester|graduation|distinction)\b/i;
+    function collectCandidateFieldItems(value, out=[]){
+        if(Array.isArray(value)){ value.forEach(item=>collectCandidateFieldItems(item, out)); return out; }
+        if(value===undefined || value===null) return out;
+        String(value).split(/\n+/).forEach(part=>{
+            const clean=part.trim();
+            if(clean) out.push(clean);
+        });
+        return out;
+    }
+    function uniqueCandidateFieldItems(value, limit=8){
+        const seen=new Set(), out=[];
+        collectCandidateFieldItems(value).forEach(item=>{
+            const key=item.toLowerCase();
+            if(!seen.has(key)){
+                seen.add(key);
+                out.push(item);
+            }
+        });
+        return out.slice(0, limit);
+    }
+    function normalizeCandidateLocation(value){
+        const items=uniqueCandidateFieldItems(value, 4);
+        const match=items.find(item=>{
+            const text=String(item || '').trim();
+            const lowered=text.toLowerCase();
+            if(!text) return false;
+            if(['remote','hybrid','onsite'].includes(lowered)) return true;
+            if(text.length > 60 || text.split(/\s+/).length > 7) return false;
+            if(/[0-9@]/.test(text) || /[:|/]/.test(text)) return false;
+            if(candidateFieldTechPattern.test(text) || candidateFieldEducationPattern.test(text)) return false;
+            return /^[A-Za-z .'-]+(?:,\s*[A-Za-z .'-]+){0,2}$/.test(text);
+        });
+        return match || '';
+    }
+    function normalizeCandidateEducation(value){
+        const items=uniqueCandidateFieldItems(value, 6);
+        const filtered=items.filter(item=>{
+            const text=String(item || '').trim();
+            if(!text || text.length > 160 || /@/.test(text)) return false;
+            if(candidateFieldTechPattern.test(text) && !candidateFieldEducationPattern.test(text)) return false;
+            return candidateFieldEducationPattern.test(text);
+        });
+        return filtered.slice(0, 2).join(', ');
+    }
     function normalizeNameKey(value){ return String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g,''); }
     function getCandidateCode(name){
         let hash=7;
@@ -6399,6 +6830,7 @@ ${session.context.substring(0,9000)}`;
         const profile=bundle?.profile || {};
         const companies=uniqueItems(profile.companies, 4);
         const skills=uniqueItems(profile.skills, 8);
+        const directProfiles=Array.isArray(profile.direct_profiles) ? profile.direct_profiles : [];
         const platforms=(bundle?.platforms || []).filter(Boolean);
         const fingerprintRows=[
             ['Name', profile.name || 'Unavailable'],
@@ -6441,6 +6873,11 @@ ${session.context.substring(0,9000)}`;
                         <div class="osint-metric-note">Highest-confidence records retained for analyst review.</div>
                     </div>
                     <div class="osint-metric">
+                        <div class="osint-metric-label">Direct profile URLs</div>
+                        <div class="osint-metric-value">${summary.direct_profiles ?? directProfiles.length ?? 0}</div>
+                        <div class="osint-metric-note">LinkedIn, GitHub, or web profile links extracted directly from the uploaded resume.</div>
+                    </div>
+                    <div class="osint-metric">
                         <div class="osint-metric-label">False positives</div>
                         <div class="osint-metric-value">${summary.rejected_results ?? 0}</div>
                         <div class="osint-metric-note">Results rejected due to weak identity alignment.</div>
@@ -6471,6 +6908,12 @@ ${session.context.substring(0,9000)}`;
                                 <div class="osint-fingerprint-label">Skills</div>
                                 <div class="osint-fingerprint-value">
                                     <div class="osint-chip-row">${skills.length ? skills.map(item=>`<span class="osint-chip">${escapeHtml(item)}</span>`).join('') : '<span class="osint-empty">No skill data available.</span>'}</div>
+                                </div>
+                            </div>
+                            <div class="osint-fingerprint-item">
+                                <div class="osint-fingerprint-label">Direct Profiles</div>
+                                <div class="osint-fingerprint-value">
+                                    ${directProfiles.length ? directProfiles.map(item=>`<div style="margin-top:6px"><a class="osint-result-title" href="${escapeHtml(item.href || '#')}" target="_blank" rel="noreferrer">${escapeHtml((item.platform || 'web').replace(/^./, c=>c.toUpperCase()))}</a><div class="osint-result-url">${escapeHtml(item.href || '')}</div></div>`).join('') : '<span class="osint-empty">No direct profile URLs extracted.</span>'}
                                 </div>
                             </div>
                         </div>
@@ -6517,11 +6960,7 @@ ${session.context.substring(0,9000)}`;
         return [...counts.entries()].sort((a,b)=>b[1]-a[1])[0][0];
     }
     function buildComparisonSnapshot(candidate, dbIndex){
-        let cached=null;
-        try{
-            const raw=localStorage.getItem(getCacheKey(candidate.name));
-            if(raw) cached=JSON.parse(raw);
-        }catch(err){ console.error(err); }
+        const cached=getCandidateStoredDossier(candidate);
         const extracted=cached?.extracted_data || {};
         const analysis=cached?.analysis || {};
         const radar=cached?.visualization_data?.radar_stats || {};
@@ -6981,11 +7420,7 @@ ${session.context.substring(0,9000)}`;
     }
 
     function buildTalentPoolCardModel(candidate, index){
-        let cached=null;
-        try{
-            const raw=localStorage.getItem(getCacheKey(candidate.name));
-            if(raw) cached=JSON.parse(raw);
-        }catch(err){ console.error(err); }
+        const cached=getCandidateStoredDossier(candidate);
         const extracted=cached?.extracted_data || {};
         const analysis=cached?.analysis || {};
         const intelligence=cached?.intelligence || {};
@@ -6995,8 +7430,7 @@ ${session.context.substring(0,9000)}`;
         const skills=uniqueItems([analysis.matched_skills, candidate.skills, extracted.skills], 6);
         const signals=uniqueItems([analysis.strong_sections, intelligence.evidence_highlights], 3);
         const experience=safeText(extracted.total_experience_years || candidate.total_experience_years, 'Not specified');
-        const locationValue=Array.isArray(extracted.location) ? extracted.location.join(', ') : extracted.location;
-        const location=safeText(locationValue, 'Unknown');
+        const location=normalizeCandidateLocation(extracted.location) || 'Unknown';
         const confidence=clamp(intelligence.confidence === 'High' ? 88 : intelligence.confidence === 'Medium' ? 72 : score - 10, 40, 96);
         const name=safeText(candidate.name, `Candidate ${index+1}`);
         return {
@@ -7142,7 +7576,7 @@ ${session.context.substring(0,9000)}`;
                         <div class="pool-card-note">Open dossier for deeper OSINT, interview prompts, and report export.</div>
                         <div style="display:flex;gap:8px;flex-wrap:wrap">
                             <button class="btn btn-outline btn-sm" onclick="event.stopPropagation();renderDBDossier(${index})">Open dossier</button>
-                            <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();deleteCandidateRecord(window.dbCandidates[${index}].name)">Delete</button>
+                            <button class="btn btn-danger btn-sm" onclick="event.stopPropagation();deleteCandidateRecord(window.dbCandidates[${index}].record_id, window.dbCandidates[${index}].name)">Delete</button>
                         </div>
                     </div>
                 </article>`;
@@ -7270,9 +7704,9 @@ ${session.context.substring(0,9000)}`;
 
     window.renderDBDossier=function(idx){
         const c=window.dbCandidates[idx]; if(!c)return;
-        const cached=localStorage.getItem(getCacheKey(c.name));
-        
-        if(cached){try{const ai=JSON.parse(cached);switchTab('resume-view',document.querySelectorAll('.nav-btn'));window.currentCandidateData=ai;renderDossier(ai,true,'db');return;}catch(e){console.error(e);}}
+        const cached=getCandidateStoredDossier(c);
+
+        if(cached){try{const ai=JSON.parse(JSON.stringify(cached));switchTab('resume-view',document.querySelectorAll('.nav-btn'));window.currentCandidateData=ai;renderDossier(ai,true,'db');return;}catch(e){console.error(e);}}
         const syn={
             fileName:c.name+" (Saved)",
             resumeText:"From saved record.",
@@ -7300,7 +7734,8 @@ ${session.context.substring(0,9000)}`;
         workspaceMode:'financial',
         personaMode:'analyst',
         busy:false,
-        streamRenderHandle:null
+        streamRenderHandle:null,
+        promptsCollapsed:(()=>{try{const stored=localStorage.getItem('chat_prompts_collapsed'); return stored===null ? true : stored==='true';}catch(err){return true;}})()
     };
     const CHAT_WORKSPACE_COPY = {
         financial: {
@@ -7389,8 +7824,8 @@ ${session.context.substring(0,9000)}`;
         const analysis=source.analysis || {};
         const intelligence=source.intelligence || {};
         const primaryRole=Array.isArray(extracted.job_titles) ? extracted.job_titles[0] : extracted.job_titles;
-        const education=Array.isArray(extracted.education) ? extracted.education.join(', ') : extracted.education;
-        const location=Array.isArray(extracted.location) ? extracted.location.join(', ') : extracted.location;
+        const education=normalizeCandidateEducation(extracted.education) || 'Not stated';
+        const location=normalizeCandidateLocation(extracted.location) || 'Not stated';
         const companies=uniqueItems(extracted.companies, 6).join(', ');
         const matchedSkills=uniqueItems(analysis.matched_skills, 10).join(', ');
         const missingSkills=uniqueItems(analysis.missing_skills, 10).join(', ');
@@ -7453,6 +7888,7 @@ ${session.context.substring(0,9000)}`;
         activeChatSessionIds.resume=sid;
         appendChatSessionRailItem(sid);
         loadSession(sid, {syncWorkspace:false});
+        persistChatSessionIfNeeded(sid);
         return {id:sid, session:chatSessions[sid]};
     }
 
@@ -7495,7 +7931,14 @@ ${session.context.substring(0,9000)}`;
 
     function ensureChatSessionFromCurrentResume(){
         const existingResumeId=activeChatSessionIds.resume;
-        if(existingResumeId && chatSessions[existingResumeId]) return chatSessions[existingResumeId];
+        if(existingResumeId && chatSessions[existingResumeId]){
+            const displayName=String(getResumeWorkspaceDisplayName()).trim() || 'Resume dossier';
+            chatSessions[existingResumeId].name=displayName;
+            chatSessions[existingResumeId].displayName=displayName;
+            chatSessions[existingResumeId].context=buildResumeChatContext(getResumeWorkspaceText());
+            persistChatSessionIfNeeded(existingResumeId);
+            return chatSessions[existingResumeId];
+        }
         return createResumeChatSession(getResumeWorkspaceDisplayName())?.session || null;
     }
 
@@ -7503,8 +7946,112 @@ ${session.context.substring(0,9000)}`;
         const matches=Object.entries(chatSessions).filter(([, session])=>{
             const type=session.analysisMode || inferChatContextType(session);
             return type===workspaceMode;
-        }).sort((a,b)=>(Number(b[1]?.createdAt)||0)-(Number(a[1]?.createdAt)||0));
+        }).sort((a,b)=>(getChatSessionTimestampMs(b[1])||0)-(getChatSessionTimestampMs(a[1])||0));
         return matches[0]?.[0] || null;
+    }
+
+    function getChatSessionTimestampMs(session){
+        const raw=session?.updatedAt || session?.createdAt || 0;
+        if(typeof raw==='number' && Number.isFinite(raw)) return raw;
+        const parsed=Date.parse(String(raw || ''));
+        return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    function hydratePersistedChatSession(record){
+        if(!record || typeof record!=='object') return null;
+        const sessionKey=String(record.session_key || '').trim();
+        if(!sessionKey) return null;
+        const createdAt=getChatSessionTimestampMs({createdAt:record.created_at, updatedAt:record.updated_at}) || Date.now();
+        return {
+            name:String(record.source_name || record.display_name || 'Workspace session').trim() || 'Workspace session',
+            displayName:String(record.display_name || record.source_name || 'Workspace session').trim() || 'Workspace session',
+            context:String(record.context || '').trim(),
+            history:Array.isArray(record.history) ? record.history : [],
+            analysisMode:String(record.analysis_mode || 'financial').trim().toLowerCase()==='resume' ? 'resume' : 'financial',
+            createdAt,
+            updatedAt:record.updated_at || record.created_at || '',
+            persisted:true
+        };
+    }
+
+    async function persistChatSessionIfNeeded(sessionId){
+        if(!isWorkspaceSyncedUser() || !sessionId || !chatSessions[sessionId]) return;
+        const sessionData=chatSessions[sessionId];
+        try{
+            const response=await fetch(API_BASE + '/api/chat/sessions',{
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({
+                    session_key:sessionId,
+                    analysis_mode:sessionData.analysisMode || inferChatContextType(sessionData),
+                    display_name:sessionData.displayName || sessionData.name || 'Workspace session',
+                    source_name:sessionData.name || sessionData.displayName || 'Workspace session',
+                    context:sessionData.context || '',
+                    history:Array.isArray(sessionData.history) ? sessionData.history : []
+                })
+            });
+            if(response.ok){
+                sessionData.persisted=true;
+                sessionData.updatedAt=new Date().toISOString();
+            }
+        }catch(err){
+            console.error('Workspace session persistence failed:', err);
+        }
+    }
+
+    async function restorePersistedChatSessions(){
+        if(!isWorkspaceSyncedUser()) return;
+        try{
+            const response=await fetch(API_BASE + '/api/chat/sessions');
+            const payload=await response.json().catch(()=>({sessions:[]}));
+            if(!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+            const records=Array.isArray(payload.sessions) ? payload.sessions : [];
+            records.forEach(record=>{
+                const hydrated=hydratePersistedChatSession(record);
+                if(!hydrated) return;
+                chatSessions[record.session_key]=hydrated;
+                const mode=hydrated.analysisMode || inferChatContextType(hydrated);
+                if(!activeChatSessionIds[mode]) activeChatSessionIds[mode]=record.session_key;
+            });
+            renderChatHistoryRail();
+            updateChatWorkspaceUI();
+            const preferredId=activeChatSessionIds[chatUiState.workspaceMode] || getLatestChatSessionId(chatUiState.workspaceMode);
+            if(!activeSessionId && preferredId && chatSessions[preferredId]){
+                loadSession(preferredId,{syncWorkspace:false});
+            }
+        }catch(err){
+            console.error('Workspace restore failed:', err);
+        }
+    }
+
+    async function removeChatSession(sessionId){
+        const session=chatSessions[sessionId];
+        if(!session) return;
+        const label=session.displayName || session.name || 'this workspace';
+        const go=await cyberConfirm(`Delete uploaded workspace <strong>${escapeHtml(label)}</strong>?`, false);
+        if(!go) return;
+        try{
+            if(isWorkspaceSyncedUser()){
+                const response=await fetch(`${API_BASE}/api/chat/sessions/${encodeURIComponent(sessionId)}`,{method:'DELETE'});
+                const payload=await response.json().catch(()=>({}));
+                if(!response.ok || payload.success===false) throw new Error(payload.error || 'Delete failed.');
+            }
+            const mode=session.analysisMode || inferChatContextType(session);
+            delete chatSessions[sessionId];
+            if(activeChatSessionIds[mode]===sessionId) activeChatSessionIds[mode]=null;
+            if(activeSessionId===sessionId) activeSessionId=null;
+            renderChatHistoryRail();
+            updateChatWorkspaceUI();
+            const fallbackId=activeChatSessionIds[mode] || getLatestChatSessionId(mode);
+            if(chatUiState.workspaceMode===mode && fallbackId && chatSessions[fallbackId]){
+                loadSession(fallbackId,{syncWorkspace:false});
+            } else if(chatUiState.workspaceMode===mode){
+                renderChatWorkspaceWelcome();
+            }
+            showToast(`${label} deleted.`, 'success');
+        }catch(err){
+            showToast(err.message || 'Could not delete the workspace.', 'error');
+        }
     }
 
     function getChatQuickPrompts(){
@@ -7513,6 +8060,23 @@ ${session.context.substring(0,9000)}`;
         if(Array.isArray(personaPrompts) && personaPrompts.length) return personaPrompts;
         return workspacePrompts.analyst || [];
     }
+
+    function syncChatPromptVisibility(){
+        const strip=document.getElementById('chat-suggestion-strip');
+        const toggle=document.getElementById('chat-suggestion-toggle');
+        if(!strip || !toggle) return;
+        const collapsed=!!chatUiState.promptsCollapsed;
+        strip.classList.toggle('is-collapsed', collapsed);
+        toggle.textContent=collapsed ? 'Show' : 'Hide';
+        toggle.setAttribute('aria-expanded', String(!collapsed));
+        toggle.title=collapsed ? 'Show quick prompts' : 'Hide quick prompts';
+    }
+
+    window.toggleChatQuickPrompts=function(){
+        chatUiState.promptsCollapsed=!chatUiState.promptsCollapsed;
+        try{localStorage.setItem('chat_prompts_collapsed', String(chatUiState.promptsCollapsed));}catch(err){}
+        syncChatPromptVisibility();
+    };
 
     function updateChatPersonaUI(){
         const personaKicker=document.getElementById('chat-persona-kicker');
@@ -7565,6 +8129,7 @@ ${session.context.substring(0,9000)}`;
             btn.onclick=()=>sendTalentMessage(item.prompt, item.label, {responseMode:item.responseMode || 'markdown'});
             chipWrap.appendChild(btn);
         });
+        syncChatPromptVisibility();
     }
 
     function renderChatWorkspaceWelcome(){
@@ -7651,13 +8216,7 @@ ${session.context.substring(0,9000)}`;
 
     function buildSavedCandidateDossier(candidate){
         if(!candidate) return null;
-        let cached=null;
-        try{
-            const raw=localStorage.getItem(getCacheKey(candidate.name));
-            if(raw) cached=JSON.parse(raw);
-        }catch(err){
-            console.error(err);
-        }
+        const cached=getCandidateStoredDossier(candidate);
         if(cached && typeof cached==='object'){
             const cloned=JSON.parse(JSON.stringify(cached));
             const extracted=cloned.extracted_data || {};
@@ -7798,7 +8357,7 @@ ${session.context.substring(0,9000)}`;
         const sessions=Object.entries(chatSessions).filter(([, session])=>{
             const type=session.analysisMode || inferChatContextType(session);
             return type===chatUiState.workspaceMode;
-        }).sort((a,b)=>(Number(b[1]?.createdAt)||0)-(Number(a[1]?.createdAt)||0));
+        }).sort((a,b)=>(getChatSessionTimestampMs(b[1])||0)-(getChatSessionTimestampMs(a[1])||0));
         count.textContent=String(sessions.length);
         historyList.innerHTML='';
         if(!sessions.length){
@@ -7810,14 +8369,28 @@ ${session.context.substring(0,9000)}`;
         historyWrap.style.display='flex';
         sessions.forEach(([sid, session])=>{
             const type=session.analysisMode || inferChatContextType(session);
+            const row=document.createElement('div');
+            row.className='history-item-row';
             const item=document.createElement('button');
             item.type='button';
             item.className='history-item';
             item.dataset.id=sid;
-            item.innerHTML=`${getChatSessionIconMarkup(type)}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(session.displayName || session.name || getChatContextLabel(type))}</span>`;
+            item.innerHTML=`${getChatSessionIconMarkup(type)}<span class="history-item-text">${escapeHtml(session.displayName || session.name || getChatContextLabel(type))}</span>`;
             item.onclick=()=>loadSession(sid);
             item.classList.toggle('active', sid===activeSessionId);
-            historyList.appendChild(item);
+            const deleteBtn=document.createElement('button');
+            deleteBtn.type='button';
+            deleteBtn.className='history-item-delete';
+            deleteBtn.title='Delete this uploaded workspace';
+            deleteBtn.setAttribute('aria-label', `Delete ${session.displayName || session.name || 'workspace'}`);
+            deleteBtn.innerHTML='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path></svg>';
+            deleteBtn.onclick=(event)=>{
+                event.stopPropagation();
+                removeChatSession(sid);
+            };
+            row.appendChild(item);
+            row.appendChild(deleteBtn);
+            historyList.appendChild(row);
         });
     }
 
@@ -8020,6 +8593,26 @@ ${session.context.substring(0,9000)}`;
         if(existingSession){
             const sameName=normalizeNameKey(existingSession.displayName || existingSession.name)===normalizeNameKey(displayName);
             if(existingSession.context===context && sameName) return existingSession;
+            if(sameName){
+                existingSession.context=context;
+                existingSession.name=displayName;
+                existingSession.displayName=displayName;
+                persistChatSessionIfNeeded(existingResumeId);
+                return existingSession;
+            }
+        }
+        const matchingEntry=Object.entries(chatSessions).find(([, session])=>{
+            const type=session.analysisMode || inferChatContextType(session);
+            return type==='resume' && normalizeNameKey(session.displayName || session.name)===normalizeNameKey(displayName);
+        });
+        if(matchingEntry){
+            const [matchingId, matchingSession]=matchingEntry;
+            matchingSession.context=context;
+            matchingSession.name=displayName;
+            matchingSession.displayName=displayName;
+            activeChatSessionIds.resume=matchingId;
+            persistChatSessionIfNeeded(matchingId);
+            return matchingSession;
         }
         return createResumeChatSession(displayName)?.session || existingSession || null;
     };
@@ -8077,6 +8670,7 @@ ${session.context.substring(0,9000)}`;
             activeSessionId=sessionId;
             appendChatSessionRailItem(sessionId);
             loadSession(sessionId,{syncWorkspace:false});
+            persistChatSessionIfNeeded(sessionId);
         } catch(err){
             document.getElementById('file-status').style.display='flex';
             document.getElementById('file-name-display').textContent='Load failed';
@@ -8295,6 +8889,7 @@ ${session.context.substring(0,9000)}`;
                 content:finalAnswer,
                 widget:scorecardPayload ? {mode:'scorecard', scorecard:scorecardPayload} : undefined
             });
+            persistChatSessionIfNeeded(liveSessionId || activeSessionId);
         } catch(err){
             thinking.remove();
             appendChatEntry(chat,{role:'assistant',content:`**Error:** ${err.message}`});
@@ -8555,26 +9150,29 @@ ${candidatePayload}`;
         if(!go)return;
         try{
             const r=await fetch(API_BASE + '/api/purge',{method:'POST'});
-            if(r.ok){
-                Object.keys(localStorage).forEach(k=>{if(k.startsWith('dossier_'))localStorage.removeItem(k);});
+            const payload=await r.json().catch(()=>({}));
+            if(r.ok && payload.success!==false){
+                clearAllScopedDossiers();
                 showToast("Database purged successfully.", 'success');
                 fetchLeaderboard();
             }
-            else showToast("Purge endpoint not available. Check Flask server.", 'error');
+            else showToast(payload.error || "Purge endpoint not available. Check Flask server.", 'error');
         } catch(e){showToast("Network error. Is Flask running?", 'error');}
     }
 
-    async function deleteCandidateRecord(name){
+    async function deleteCandidateRecord(recordId, name){
         const go=await cyberConfirm(`Delete candidate <strong>${name}</strong>?`,false);
         if(!go)return;
         
         try{
-            const r=await fetch(API_BASE + '/api/delete_candidate',{method:'POST', headers:{'Content-Type': 'application/json'}, body: JSON.stringify({name: name})});
-            if(r.ok){
+            const r=await fetch(API_BASE + '/api/delete_candidate',{method:'POST', headers:{'Content-Type': 'application/json'}, body: JSON.stringify({record_id: recordId})});
+            const payload=await r.json().catch(()=>({}));
+            if(r.ok && payload.success!==false){
+                clearCachedDossier(name);
                 showToast(`Candidate ${name} deleted.`, 'success');
                 fetchLeaderboard();
             } else {
-                showToast("Failed to delete candidate.", 'error');
+                showToast(payload.error || "Failed to delete candidate.", 'error');
             }
         } catch(e){showToast("Network error. Is Flask running?", 'error');}
     }

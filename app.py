@@ -63,6 +63,13 @@ try:
         verify_email_signup_otp,
         authenticate_email_user,
         update_platform_user_profile,
+        save_candidate_dossier_for_user,
+        get_user_candidate_dossiers,
+        delete_user_candidate_dossier,
+        purge_user_candidate_dossiers,
+        upsert_user_chat_session,
+        get_user_chat_sessions,
+        delete_user_chat_session,
     )
     DB_AVAILABLE = True
 except ImportError as e:
@@ -85,6 +92,12 @@ try:
     PDFPLUMBER_AVAILABLE = True
 except Exception:
     PDFPLUMBER_AVAILABLE = False
+
+try:
+    from pypdf import PdfReader
+    PYPDF_AVAILABLE = True
+except Exception:
+    PYPDF_AVAILABLE = False
 
 try:
     from sklearn.feature_extraction.text import TfidfVectorizer
@@ -253,6 +266,10 @@ def build_session_profile_user(current_user, profile_payload):
         ),
     }
 
+def get_authenticated_user_email():
+    current_user = session.get('user') or {}
+    return str(current_user.get('email') or '').strip().lower()
+
 def ensure_profile_avatar_dir():
     avatar_dir = os.path.join(BASE_DIR, PROFILE_AVATAR_FOLDER)
     os.makedirs(avatar_dir, exist_ok=True)
@@ -417,6 +434,72 @@ def compute_match(jd_raw, resume_text):
         "missing_skills": missing_gaps,
         "verdict": "Strong Candidate" if score > 60 else "Moderate Match" if score > 30 else "Low Fit"
     }
+
+
+def normalize_profile_url(value):
+    text = str(value or "").strip().strip("()[]{}<>,;")
+    if text.lower().startswith("www."):
+        text = "https://" + text
+    if not re.match(r"^https?://", text, re.IGNORECASE):
+        return ""
+    return text
+
+
+def get_profile_platform_label(url):
+    host = urlparse(str(url or "")).netloc.lower().strip()
+    if host.startswith("www."):
+        host = host[4:]
+    if host.endswith("linkedin.com"):
+        return "LinkedIn"
+    if host.endswith("github.com"):
+        return "GitHub"
+    return "Web"
+
+
+def append_direct_profile_links(text, urls):
+    ordered_urls = []
+    seen = set()
+    for raw_url in urls or []:
+        clean = normalize_profile_url(raw_url)
+        key = clean.lower()
+        if clean and key not in seen:
+            seen.add(key)
+            ordered_urls.append(clean)
+
+    base = str(text or "").strip()
+    if not ordered_urls:
+        return base
+
+    link_lines = [f"{get_profile_platform_label(url)}: {url}" for url in ordered_urls]
+    suffix = "Direct profile links:\n" + "\n".join(link_lines)
+    return f"{base}\n\n{suffix}".strip() if base else suffix
+
+
+def extract_pdf_profile_links(raw_pdf_bytes):
+    if not PYPDF_AVAILABLE or not raw_pdf_bytes:
+        return []
+
+    urls = []
+    seen = set()
+    try:
+        reader = PdfReader(io.BytesIO(raw_pdf_bytes))
+        for page in reader.pages:
+            for annot_ref in page.get("/Annots") or []:
+                try:
+                    annot = annot_ref.get_object()
+                    action = annot.get("/A")
+                    uri = action.get("/URI") if action else None
+                    clean = normalize_profile_url(uri)
+                    key = clean.lower()
+                    if clean and key not in seen:
+                        seen.add(key)
+                        urls.append(clean)
+                except Exception:
+                    continue
+    except Exception:
+        return []
+
+    return urls
 
 
 app = Flask(__name__)
@@ -761,10 +844,22 @@ def analyze():
         if not file_name:
             file_name = file.filename
 
+    extracted_profile_links = []
     if len(resume_text.strip()) < 40 and file:
+        lower_file_name = file.filename.lower()
+        if lower_file_name.endswith('.pdf'):
+            raw_pdf = b""
+            try:
+                file.stream.seek(0)
+                raw_pdf = file.stream.read()
+            except Exception:
+                raw_pdf = b""
+            extracted_profile_links = extract_pdf_profile_links(raw_pdf)
+
         if PDFPLUMBER_AVAILABLE and file.filename.lower().endswith('.pdf'):
             try:
-                with pdfplumber.open(file) as pdf:
+                pdf_source = io.BytesIO(raw_pdf) if raw_pdf else file
+                with pdfplumber.open(pdf_source) as pdf:
                     resume_text = " ".join([p.extract_text() for p in pdf.pages if p.extract_text()])
             except Exception:
                 raise APIError("Could not read PDF text from the uploaded resume.", 500)
@@ -775,6 +870,9 @@ def analyze():
                 resume_text = raw.decode('utf-8', errors='ignore')
             except Exception:
                 resume_text = ""
+
+    if extracted_profile_links:
+        resume_text = append_direct_profile_links(resume_text, extracted_profile_links)
 
     if len(resume_text.strip()) < 40:
         raise APIError("The resume text was too short to analyze reliably.", 400)
@@ -843,21 +941,39 @@ def ai_chat_proxy():
 def save_candidate():
     if not DB_AVAILABLE:
         return jsonify({"error": "Database not configured/available."}), 500
-        
+
     data = request.json
     if not data:
         return jsonify({"error": "No data provided"}), 400
-        
+
+    user_email = get_authenticated_user_email()
+    if not user_email:
+        return jsonify({
+            "success": True,
+            "persisted": False,
+            "message": "Guest workspace data stays local until you sign in."
+        })
+
     jd_text = data.get('jd_text', 'No JD Provided')
     candidate_data = data.get('candidate_data', {})
     analysis_data = data.get('analysis_data', {})
+    dossier_data = data.get('dossier_data', {}) if isinstance(data.get('dossier_data', {}), dict) else {}
+    resume_text = str(data.get('resume_text', '') or '')
     
     job_title = "Unknown Mission"
     lines = [line.strip() for line in jd_text.split('\n') if line.strip()]
     if lines:
         job_title = lines[0][:90] 
-        
-    result = save_candidate_data(job_title, jd_text, candidate_data, analysis_data)
+
+    result = save_candidate_dossier_for_user(
+        user_email,
+        job_title,
+        jd_text,
+        candidate_data,
+        analysis_data,
+        dossier_data=dossier_data,
+        resume_text=resume_text,
+    )
     return jsonify(result)
 
 @app.route('/api/leaderboard', methods=['GET'])
@@ -865,35 +981,102 @@ def get_leaderboard():
     if not DB_AVAILABLE:
         return jsonify({"error": "Database not configured/available."}), 500
 
+    user_email = get_authenticated_user_email()
+    if not user_email:
+        return jsonify([])
+
     try:
         limit = int(request.args.get('limit', 50))
     except Exception:
         limit = 50
     limit = max(1, min(limit, 100))
 
-    top_candidates = get_top_candidates(limit=limit)
+    top_candidates = get_user_candidate_dossiers(user_email, limit=limit)
     return jsonify(top_candidates)
 
 @app.route('/api/delete_candidate', methods=['POST'])
 def delete_candidate():
     if not DB_AVAILABLE:
         return jsonify({"error": "Database not configured/available."}), 500
-        
+
+    user_email = get_authenticated_user_email()
+    if not user_email:
+        return jsonify({"success": False, "error": "Sign in required."}), 401
+
     data = request.json
-    name = data.get('name')
-    if not name:
-        return jsonify({"success": False, "error": "No name provided"}), 400
-        
-    success = delete_candidate_by_name(name)
-    return jsonify({"success": success})
+    record_id = data.get('record_id')
+    if record_id in (None, ''):
+        return jsonify({"success": False, "error": "No record id provided"}), 400
+
+    result = delete_user_candidate_dossier(user_email, record_id)
+    return jsonify(result)
 
 @app.route('/api/purge', methods=['POST'])
 def purge():
     if not DB_AVAILABLE:
         return jsonify({"error": "Database not configured/available."}), 500
-        
-    success = purge_database()
-    return jsonify({"success": success})
+
+    user_email = get_authenticated_user_email()
+    if not user_email:
+        return jsonify({"success": False, "error": "Sign in required."}), 401
+
+    result = purge_user_candidate_dossiers(user_email)
+    return jsonify(result)
+
+@app.route('/api/chat/sessions', methods=['GET'])
+def api_get_chat_sessions():
+    if not DB_AVAILABLE:
+        return jsonify({"error": "Database not configured/available."}), 500
+
+    user_email = get_authenticated_user_email()
+    if not user_email:
+        return jsonify({"sessions": []})
+
+    sessions_payload = get_user_chat_sessions(user_email)
+    return jsonify({"success": True, "sessions": sessions_payload})
+
+@app.route('/api/chat/sessions', methods=['POST'])
+def api_save_chat_session():
+    if not DB_AVAILABLE:
+        return jsonify({"error": "Database not configured/available."}), 500
+
+    user_email = get_authenticated_user_email()
+    if not user_email:
+        return jsonify({"success": False, "error": "Sign in required."}), 401
+
+    data = request.get_json(silent=True) or {}
+    session_key = str(data.get('session_key') or '').strip()
+    context_text = str(data.get('context') or '')
+    history = data.get('history', []) if isinstance(data.get('history', []), list) else []
+    analysis_mode = str(data.get('analysis_mode') or 'financial').strip().lower()
+    display_name = str(data.get('display_name') or data.get('source_name') or 'Workspace session').strip()
+    source_name = str(data.get('source_name') or data.get('display_name') or 'Workspace session').strip()
+
+    if not session_key:
+        return jsonify({"success": False, "error": "Session key is required."}), 400
+
+    result = upsert_user_chat_session(
+        user_email,
+        session_key,
+        analysis_mode,
+        display_name,
+        source_name,
+        context_text,
+        history,
+    )
+    return jsonify(result)
+
+@app.route('/api/chat/sessions/<session_key>', methods=['DELETE'])
+def api_delete_chat_session(session_key):
+    if not DB_AVAILABLE:
+        return jsonify({"error": "Database not configured/available."}), 500
+
+    user_email = get_authenticated_user_email()
+    if not user_email:
+        return jsonify({"success": False, "error": "Sign in required."}), 401
+
+    result = delete_user_chat_session(user_email, session_key)
+    return jsonify(result)
 
 @app.route('/chat', methods=['POST'])
 @limiter.limit("40 per hour")
@@ -938,9 +1121,6 @@ def chat():
             analysis_mode=analysis_mode,
         )
         payload = {"answer": answer, "mode": "markdown"}
-
-    if DB_AVAILABLE and answer:
-        save_chat_message(query, answer)
 
     return jsonify(payload)
 
@@ -1010,8 +1190,6 @@ def chat_stream():
                             yield build_sse_event("token", {"content": chunk})
 
             final_answer = "".join(answer_parts).strip()
-            if DB_AVAILABLE and final_answer:
-                save_chat_message(query, final_answer)
             yield build_sse_event("done", {"answer": final_answer, "mode": response_mode})
         except Exception as exc:
             yield build_sse_event("error", {"message": str(exc)})
