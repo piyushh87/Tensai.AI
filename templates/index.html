@@ -6356,6 +6356,9 @@ ${session.context.substring(0,9000)}`;
             .then(r=>r.json())
             .then(d=>{
                 if(!d.success || !d.data) throw new Error(d.error || 'Trace unavailable');
+                aiData.osintBundle=d.data;
+                if(window.currentCandidateData===aiData) window.currentCandidateData.osintBundle=d.data;
+                cacheDossier(aiData);
                 document.getElementById('osint-panel-content').innerHTML=renderOSINTBundle(d.data);
             })
             .catch(err=>{
@@ -6546,15 +6549,258 @@ ${session.context.substring(0,9000)}`;
     }
 
     // â”€â”€ excel export â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    window.downloadExcelReport = function(){
-        if(!window.currentCandidateData)return cyberAlert("No report to export.",true);
-        const d=window.currentCandidateData; const ext=d.extracted_data||{}; const a=d.analysis||{}; const vd=d.visualization_data||{}; const sf=vd.skill_frequency||{};
-        let rows='';for(const[k,v]of Object.entries(sf))rows+=`<tr><td>${k}</td><td>${v}</td></tr>`;
-        const name=(ext.name||"Candidate").replace(/[^a-zA-Z0-9]/g,'_');
-        const html=`<html><head><meta charset="utf-8"/></head><body><table><tr><td colspan="2" style="background:#1a73e8;color:#fff;font-size:18px;padding:12px">Tensai.AI | Candidate Report</td></tr><tr><td>Name</td><td>${ext.name||'N/A'}</td></tr><tr><td>Email</td><td>${ext.email||'N/A'}</td></tr><tr><td>Score</td><td>${a.overall_score||0}%</td></tr><tr><td colspan="2" style="background:#f1f3f4;font-weight:bold">Skills</td></tr>${rows}</table></body></html>`;
-        const blob=new Blob([html],{type:'application/vnd.ms-excel'});
-        const url=URL.createObjectURL(blob);
-        const l=document.createElement("a"); l.href=url; l.download=`${name}_Report.xls`; document.body.appendChild(l); l.click(); document.body.removeChild(l);
+    function getExcelScoreTone(score){
+        if(score >= 80) return {accent:'#16a34a', soft:'#dcfce7', ink:'#14532d', bar:'#22c55e'};
+        if(score >= 65) return {accent:'#2563eb', soft:'#dbeafe', ink:'#1e3a8a', bar:'#60a5fa'};
+        if(score >= 50) return {accent:'#d97706', soft:'#fef3c7', ink:'#78350f', bar:'#f59e0b'};
+        return {accent:'#dc2626', soft:'#fee2e2', ink:'#7f1d1d', bar:'#ef4444'};
+    }
+    function buildExcelBar(value, maxValue=100, color='#60a5fa', cells=12){
+        const safeValue=Math.max(0, Number(value) || 0);
+        const safeMax=Math.max(1, Number(maxValue) || 1);
+        const filled=Math.max(0, Math.min(cells, Math.round((safeValue / safeMax) * cells)));
+        const parts=[];
+        for(let i=0;i<cells;i++){
+            parts.push(`<td style="width:16px;height:10px;background:${i < filled ? color : '#e5e7eb'};border:1px solid ${i < filled ? color : '#d1d5db'};font-size:0;line-height:0;">&nbsp;</td>`);
+        }
+        return `<table cellpadding="0" cellspacing="2" border="0" style="border-collapse:separate;"><tr>${parts.join('')}</tr></table>`;
+    }
+    function buildExcelBulletRows(items, emptyText='Not available.'){
+        const values=uniqueItems(items, 12);
+        if(!values.length){
+            return `<tr><td style="font-size:12px;line-height:1.7;color:#64748b;padding:0 0 6px 0;">${escapeHtml(emptyText)}</td></tr>`;
+        }
+        return values.map(item=>`<tr><td style="font-size:12px;line-height:1.7;color:#1f2937;padding:0 0 6px 0;">&#8226; ${escapeHtml(item)}</td></tr>`).join('');
+    }
+    function buildExcelSkillChartRows(entries){
+        const items=(entries||[]).slice(0,10);
+        if(!items.length){
+            return `<tr><td colspan="3" style="font-size:12px;color:#64748b;padding:8px 0;">No skill-frequency data available.</td></tr>`;
+        }
+        const maxValue=Math.max(...items.map(item=>item.value), 1);
+        return items.map(item=>`
+            <tr>
+                <td style="padding:8px 10px 8px 0;font-size:12px;color:#111827;border-bottom:1px solid #e5e7eb;">${escapeHtml(item.label)}</td>
+                <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;">${buildExcelBar(item.value, maxValue, '#8b5cf6', 14)}</td>
+                <td style="padding:8px 0 8px 10px;font-size:12px;font-weight:700;color:#111827;text-align:right;border-bottom:1px solid #e5e7eb;">${item.value}</td>
+            </tr>`).join('');
+    }
+    function buildExcelScoreRows(scoreBreakdown){
+        const entries=[
+            ['Skill Coverage', scoreBreakdown.skill_coverage, '#60a5fa'],
+            ['Semantic Fit', scoreBreakdown.semantic_fit, '#22c55e'],
+            ['Experience Fit', scoreBreakdown.experience_fit, '#f59e0b'],
+            ['Evidence Quality', scoreBreakdown.evidence_quality, '#8b5cf6'],
+            ['Communication', scoreBreakdown.communication, '#06b6d4']
+        ];
+        return entries.map(([label,value,color])=>`
+            <tr>
+                <td style="padding:8px 10px 8px 0;font-size:12px;color:#111827;border-bottom:1px solid #e5e7eb;">${label}</td>
+                <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;">${buildExcelBar(value, 100, color, 12)}</td>
+                <td style="padding:8px 0 8px 10px;font-size:12px;font-weight:700;color:#111827;text-align:right;border-bottom:1px solid #e5e7eb;">${value}%</td>
+            </tr>`).join('');
+    }
+    function buildExcelMetricCard(label, value, note, tone){
+        return `
+            <table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;background:#ffffff;border:1px solid #dbe4f0;border-radius:14px;">
+                <tr><td style="padding:14px 16px 6px 16px;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#64748b;">${escapeHtml(label)}</td></tr>
+                <tr><td style="padding:0 16px 4px 16px;font-size:24px;font-weight:800;color:${tone.accent};">${escapeHtml(value)}</td></tr>
+                <tr><td style="padding:0 16px 16px 16px;font-size:12px;line-height:1.55;color:#475569;">${escapeHtml(note)}</td></tr>
+            </table>`;
+    }
+    function fileSafeHtml(html){
+        return `\ufeff${String(html || '')}`;
+    }
+    async function fetchCandidateOsintBundleForExport(candidateData, locationText){
+        if(candidateData?.osintBundle) return candidateData.osintBundle;
+        const ext=candidateData?.extracted_data || {};
+        const a=candidateData?.analysis || {};
+        const traceName=(ext.name && ext.name.toLowerCase()!=='unknown' && ext.name!=='Candidate Name') ? ext.name : String(candidateData?.fileName || '').replace(/\.[^/.]+$/,'');
+        if(!traceName) return null;
+        const traceEmail=Array.isArray(ext.email) ? ext.email.join(', ') : (ext.email || 'Unknown');
+        const traceRoles=Array.isArray(ext.job_titles) ? ext.job_titles.join(', ') : (ext.job_titles || 'Unknown');
+        const traceCompanies=Array.isArray(ext.companies) ? ext.companies.join(', ') : (ext.companies || 'Unknown');
+        const traceSkills=(a.matched_skills?.length ? a.matched_skills : (Array.isArray(ext.skills) ? ext.skills : (ext.skills ? [ext.skills] : []))).join(', ') || 'Unknown';
+        const traceDirectProfiles=extractProfileLinksFromText(candidateData?.resumeText || window.currentResumeText || '');
+        const traceContext=[
+            'Candidate OSINT Fingerprint',
+            `Name: ${traceName || 'Unknown'}`,
+            `Email: ${traceEmail}`,
+            `Location: ${locationText || 'Unknown'}`,
+            `Roles: ${traceRoles}`,
+            `Companies: ${traceCompanies}`,
+            `Skills: ${traceSkills}`,
+            `Direct profiles: ${traceDirectProfiles.length ? traceDirectProfiles.map(item=>`${item.platform}: ${item.url}`).join(' | ') : 'Unavailable'}`,
+            `Resume excerpt: ${String(candidateData?.resumeText || window.currentResumeText || '').replace(/\s+/g,' ').trim().substring(0,500) || 'Unavailable'}`
+        ].join('\n');
+        try{
+            const response=await fetch(API_BASE + '/api/osint_trace',{
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({name:traceName, context:traceContext})
+            });
+            const payload=await response.json().catch(()=>({}));
+            if(!response.ok || !payload.success || !payload.data) return null;
+            candidateData.osintBundle=payload.data;
+            cacheDossier(candidateData);
+            return payload.data;
+        }catch(err){
+            console.error('Excel export OSINT fetch failed:', err);
+            return null;
+        }
+    }
+    function buildCandidateExcelModel(candidateData, osintBundle){
+        const d=candidateData || {};
+        const ext=d.extracted_data || {};
+        const a=d.analysis || {};
+        const vd=d.visualization_data || {};
+        const rs=vd.radar_stats || {};
+        const intelRaw=d.intelligence || {};
+        const score=clamp(a.overall_score || 0, 0, 100);
+        const name=safeText(ext.name && ext.name!=='Candidate Name' ? ext.name : d.fileName, 'Candidate');
+        const education=normalizeCandidateEducation(ext.education) || 'Not clearly stated';
+        const location=normalizeCandidateLocation(ext.location) || 'Unknown';
+        const phone=Array.isArray(ext.phone) ? ext.phone.join(', ') : safeText(ext.phone, 'N/A');
+        const email=Array.isArray(ext.email) ? ext.email.join(', ') : safeText(ext.email, 'N/A');
+        const roles=uniqueItems(ext.job_titles, 6);
+        const companies=uniqueItems(ext.companies, 8);
+        const matchedSkills=uniqueItems(a.matched_skills, 10);
+        const missingSkills=uniqueItems(a.missing_skills, 10);
+        const suggestedKeywords=uniqueItems(a.suggested_keywords, 10);
+        const directProfiles=extractProfileLinksFromText(d.resumeText || window.currentResumeText || '');
+        const scoreBreakdown={
+            skill_coverage:clamp(Number(intelRaw.score_breakdown?.skill_coverage ?? (score + ((a.matched_skills?.length||0)*4) - ((a.missing_skills?.length||0)*5))),0,100),
+            semantic_fit:clamp(Number(intelRaw.score_breakdown?.semantic_fit ?? score),0,100),
+            experience_fit:clamp(Number(intelRaw.score_breakdown?.experience_fit ?? rs.Experience ?? 60),0,100),
+            evidence_quality:clamp(Number(intelRaw.score_breakdown?.evidence_quality ?? ((a.strong_sections?.length||0)*12 + 42)),0,100),
+            communication:clamp(Number(intelRaw.score_breakdown?.communication ?? rs.Communication ?? 64),0,100)
+        };
+        const intelligence={
+            target_role:safeText(intelRaw.target_role, roles[0] || 'Target role not detected'),
+            fit_band:safeText(intelRaw.fit_band, score>=80 ? 'High alignment' : score>=65 ? 'Strong but needs validation' : score>=50 ? 'Mixed alignment' : 'Low alignment'),
+            seniority:safeText(intelRaw.seniority, ext.total_experience_years || 'Experience not clear'),
+            confidence:safeText(intelRaw.confidence, score>=80 ? 'High' : score>=60 ? 'Medium' : 'Low'),
+            hiring_recommendation:safeText(intelRaw.hiring_recommendation, score>=80 ? 'Advance to structured interview' : score>=60 ? 'Advance with targeted validation' : score>=45 ? 'Hold for secondary review' : 'Do not prioritize yet'),
+            search_priority:safeText(intelRaw.search_priority, score>=80 ? 'Fast-track' : score>=60 ? 'Interview with validation' : 'Continue sourcing'),
+            executive_summary:safeText(intelRaw.executive_summary, `This profile currently scores ${score}% against the active job description.`),
+            risk_flags:uniqueItems([intelRaw.risk_flags, a.missing_skills, a.weak_sections], 8),
+            evidence_highlights:uniqueItems([intelRaw.evidence_highlights, a.strong_sections, (a.matched_skills||[]).map(skill=>`Relevant evidence for ${skill}`)], 8),
+            interview_questions:uniqueItems([intelRaw.interview_questions, (a.missing_skills||[]).map(skill=>`How have you applied ${skill} in a real project or production setting?`)], 8),
+            next_steps:uniqueItems([intelRaw.next_steps, score>=80?['Move the candidate into a structured interview loop.']:score>=60?['Run a targeted validation interview before final review.']:['Keep sourcing while validating the strongest claim from the resume.']], 8)
+        };
+        const skillFrequency=Object.entries(vd.skill_frequency || {})
+            .map(([label,value])=>({label, value:Number(value) || 0}))
+            .filter(item=>item.value > 0)
+            .sort((left,right)=>right.value - left.value)
+            .slice(0, 12);
+        const topSkill=skillFrequency[0]?.label || matchedSkills[0] || 'N/A';
+        const generatedAt=new Date().toLocaleString();
+        const jobDescription=String(document.getElementById('jd-text')?.value || '').trim();
+        const resumeText=String(d.resumeText || window.currentResumeText || '').trim();
+        const osintSummary=osintBundle?.summary || {};
+        const osintLinks=(osintBundle?.platforms || []).flatMap(platform=>
+            (platform?.top_results || []).map(result=>({
+                platform:String(platform.platform || 'web'),
+                title:result.title || 'Profile result',
+                href:result.href || '',
+                confidence:result.confidence || 'low'
+            }))
+        ).slice(0, 8);
+        return {
+            name,
+            fileName:safeText(d.fileName, 'Resume dossier'),
+            email,
+            phone,
+            location,
+            education,
+            roles,
+            companies,
+            matchedSkills,
+            missingSkills,
+            suggestedKeywords,
+            score,
+            scoreTone:getExcelScoreTone(score),
+            scoreBreakdown,
+            intelligence,
+            skillFrequency,
+            topSkill,
+            jobDescription,
+            resumeText,
+            generatedAt,
+            directProfiles,
+            osintSummary,
+            osintLinks
+        };
+    }
+    function buildCandidateExcelHtml(model){
+        const tone=model.scoreTone;
+        const safeFileName=model.name.replace(/[^a-zA-Z0-9]/g,'_') || 'Candidate_Report';
+        const resumeTextHtml=(model.resumeText || 'Resume text unavailable.').substring(0, 24000).replace(/\n/g,'<br/>');
+        const jdHtml=(model.jobDescription || 'No active job description was provided during export.').substring(0, 12000).replace(/\n/g,'<br/>');
+        const directProfileRows=model.directProfiles.length
+            ? model.directProfiles.map(item=>`<tr><td style="padding:8px 10px 8px 0;font-size:12px;color:#111827;border-bottom:1px solid #e5e7eb;">${escapeHtml(item.platform)}</td><td style="padding:8px 0;font-size:12px;color:#2563eb;border-bottom:1px solid #e5e7eb;">${escapeHtml(item.url)}</td></tr>`).join('')
+            : `<tr><td colspan="2" style="padding:8px 0;font-size:12px;color:#64748b;">No direct profile links extracted.</td></tr>`;
+        const osintRows=model.osintLinks.length
+            ? model.osintLinks.map(item=>`<tr><td style="padding:8px 10px 8px 0;font-size:12px;color:#111827;border-bottom:1px solid #e5e7eb;">${escapeHtml(item.platform.replace(/^./, c=>c.toUpperCase()))}</td><td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;color:#111827;">${escapeHtml(item.title)}</td><td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;font-size:12px;color:#2563eb;">${escapeHtml(item.href)}</td><td style="padding:8px 0;text-transform:uppercase;font-size:11px;font-weight:700;color:${item.confidence === 'high' ? '#16a34a' : item.confidence === 'medium' ? '#2563eb' : '#b45309'};border-bottom:1px solid #e5e7eb;">${escapeHtml(item.confidence)}</td></tr>`).join('')
+            : `<tr><td colspan="4" style="padding:8px 0;font-size:12px;color:#64748b;">No OSINT links were retained for this export.</td></tr>`;
+        const sectionSpacer=`<tr><td colspan="4" style="height:16px;font-size:0;line-height:0;background:#eef3f8;">&nbsp;</td></tr>`;
+        const html=`<!DOCTYPE html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8"/><meta name="ProgId" content="Excel.Sheet"/><meta name="Generator" content="Tensai.AI"/><title>${escapeHtml(model.name)} Report</title></head>
+<body style="margin:0;padding:18px;background:#eef3f8;font-family:'Segoe UI',Arial,sans-serif;color:#111827;">
+<table cellpadding="0" cellspacing="0" border="0" style="width:1400px;border-collapse:collapse;background:#eef3f8;"><tr><td style="padding:0;">
+<table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;background:#ffffff;border:1px solid #dbe4f0;">
+<tr><td colspan="4" style="padding:22px 24px;background:#0f172a;color:#ffffff;border-bottom:4px solid ${tone.accent};"><div style="font-size:24px;font-weight:800;letter-spacing:.01em;">Tensai.AI Candidate Report</div><div style="font-size:13px;line-height:1.6;color:#cbd5e1;margin-top:6px;">Candidate: ${escapeHtml(model.name)} | Source: ${escapeHtml(model.fileName)} | Generated: ${escapeHtml(model.generatedAt)}</div></td></tr>
+${sectionSpacer}
+<tr>
+<td style="padding:0 10px 0 0;vertical-align:top;width:25%;">${buildExcelMetricCard('Overall Match', `${model.score}%`, `Fit band: ${model.intelligence.fit_band}`, tone)}</td>
+<td style="padding:0 10px;vertical-align:top;width:25%;">${buildExcelMetricCard('Target Role', model.intelligence.target_role, `Priority: ${model.intelligence.search_priority}`, tone)}</td>
+<td style="padding:0 10px;vertical-align:top;width:25%;">${buildExcelMetricCard('Confidence', model.intelligence.confidence, `Seniority: ${model.intelligence.seniority}`, tone)}</td>
+<td style="padding:0 0 0 10px;vertical-align:top;width:25%;">${buildExcelMetricCard('Top Skill Signal', model.topSkill, `${model.skillFrequency.length} tracked signals`, tone)}</td>
+</tr>
+${sectionSpacer}
+<tr>
+<td colspan="2" style="padding:0 10px 0 0;vertical-align:top;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;background:#ffffff;border:1px solid #dbe4f0;"><tr><td colspan="2" style="padding:14px 16px;font-size:14px;font-weight:800;color:#0f172a;background:#f8fafc;border-bottom:1px solid #e5e7eb;">Candidate Snapshot</td></tr><tr><td style="padding:10px 16px;font-size:12px;font-weight:700;color:#64748b;border-bottom:1px solid #e5e7eb;width:150px;">Name</td><td style="padding:10px 16px;font-size:12px;color:#111827;border-bottom:1px solid #e5e7eb;">${escapeHtml(model.name)}</td></tr><tr><td style="padding:10px 16px;font-size:12px;font-weight:700;color:#64748b;border-bottom:1px solid #e5e7eb;">Email</td><td style="padding:10px 16px;font-size:12px;color:#111827;border-bottom:1px solid #e5e7eb;">${escapeHtml(model.email)}</td></tr><tr><td style="padding:10px 16px;font-size:12px;font-weight:700;color:#64748b;border-bottom:1px solid #e5e7eb;">Phone</td><td style="padding:10px 16px;font-size:12px;color:#111827;border-bottom:1px solid #e5e7eb;">${escapeHtml(model.phone)}</td></tr><tr><td style="padding:10px 16px;font-size:12px;font-weight:700;color:#64748b;border-bottom:1px solid #e5e7eb;">Location</td><td style="padding:10px 16px;font-size:12px;color:#111827;border-bottom:1px solid #e5e7eb;">${escapeHtml(model.location)}</td></tr><tr><td style="padding:10px 16px;font-size:12px;font-weight:700;color:#64748b;border-bottom:1px solid #e5e7eb;">Education</td><td style="padding:10px 16px;font-size:12px;color:#111827;border-bottom:1px solid #e5e7eb;">${escapeHtml(model.education)}</td></tr><tr><td style="padding:10px 16px;font-size:12px;font-weight:700;color:#64748b;border-bottom:1px solid #e5e7eb;">Job Titles</td><td style="padding:10px 16px;font-size:12px;color:#111827;border-bottom:1px solid #e5e7eb;">${escapeHtml(model.roles.join(', ') || 'Not clearly stated')}</td></tr><tr><td style="padding:10px 16px;font-size:12px;font-weight:700;color:#64748b;">Companies</td><td style="padding:10px 16px;font-size:12px;color:#111827;">${escapeHtml(model.companies.join(', ') || 'Not clearly stated')}</td></tr></table></td>
+<td colspan="2" style="padding:0 0 0 10px;vertical-align:top;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;background:#ffffff;border:1px solid #dbe4f0;"><tr><td style="padding:14px 16px;font-size:14px;font-weight:800;color:#0f172a;background:#f8fafc;border-bottom:1px solid #e5e7eb;">Executive Hiring Brief</td></tr><tr><td style="padding:16px 16px 10px 16px;font-size:13px;font-weight:700;color:${tone.accent};">Recommendation: ${escapeHtml(model.intelligence.hiring_recommendation)}</td></tr><tr><td style="padding:0 16px 16px 16px;font-size:12px;line-height:1.8;color:#334155;">${escapeHtml(model.intelligence.executive_summary)}</td></tr><tr><td style="padding:0 16px 16px 16px;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;background:${tone.soft};"><tr><td style="padding:10px 12px;font-size:11px;font-weight:700;color:${tone.ink};text-transform:uppercase;letter-spacing:.08em;">Search Priority</td><td style="padding:10px 12px;font-size:11px;font-weight:700;color:${tone.ink};text-transform:uppercase;letter-spacing:.08em;">Fit Band</td><td style="padding:10px 12px;font-size:11px;font-weight:700;color:${tone.ink};text-transform:uppercase;letter-spacing:.08em;">Seniority</td></tr><tr><td style="padding:0 12px 10px 12px;font-size:12px;color:#111827;">${escapeHtml(model.intelligence.search_priority)}</td><td style="padding:0 12px 10px 12px;font-size:12px;color:#111827;">${escapeHtml(model.intelligence.fit_band)}</td><td style="padding:0 12px 10px 12px;font-size:12px;color:#111827;">${escapeHtml(model.intelligence.seniority)}</td></tr></table></td></tr></table></td>
+</tr>
+${sectionSpacer}
+<tr><td colspan="2" style="padding:0 10px 0 0;vertical-align:top;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;background:#ffffff;border:1px solid #dbe4f0;"><tr><td colspan="3" style="padding:14px 16px;font-size:14px;font-weight:800;color:#0f172a;background:#f8fafc;border-bottom:1px solid #e5e7eb;">Decision Scorecard</td></tr>${buildExcelScoreRows(model.scoreBreakdown)}</table></td><td colspan="2" style="padding:0 0 0 10px;vertical-align:top;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;background:#ffffff;border:1px solid #dbe4f0;"><tr><td colspan="3" style="padding:14px 16px;font-size:14px;font-weight:800;color:#0f172a;background:#f8fafc;border-bottom:1px solid #e5e7eb;">Skill Frequency Chart</td></tr>${buildExcelSkillChartRows(model.skillFrequency)}</table></td></tr>
+${sectionSpacer}
+<tr><td style="padding:0 10px 0 0;vertical-align:top;width:25%;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;background:#ffffff;border:1px solid #dbe4f0;"><tr><td style="padding:14px 16px;font-size:14px;font-weight:800;color:#0f172a;background:#f8fafc;border-bottom:1px solid #e5e7eb;">Matched Skills</td></tr><tr><td style="padding:14px 16px 8px 16px;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;">${buildExcelBulletRows(model.matchedSkills,'No matched skills listed.')}</table></td></tr></table></td><td style="padding:0 10px;vertical-align:top;width:25%;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;background:#ffffff;border:1px solid #dbe4f0;"><tr><td style="padding:14px 16px;font-size:14px;font-weight:800;color:#0f172a;background:#f8fafc;border-bottom:1px solid #e5e7eb;">Missing Skills</td></tr><tr><td style="padding:14px 16px 8px 16px;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;">${buildExcelBulletRows(model.missingSkills,'No missing skills listed.')}</table></td></tr></table></td><td style="padding:0 10px;vertical-align:top;width:25%;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;background:#ffffff;border:1px solid #dbe4f0;"><tr><td style="padding:14px 16px;font-size:14px;font-weight:800;color:#0f172a;background:#f8fafc;border-bottom:1px solid #e5e7eb;">Evidence Highlights</td></tr><tr><td style="padding:14px 16px 8px 16px;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;">${buildExcelBulletRows(model.intelligence.evidence_highlights,'No evidence highlights available.')}</table></td></tr></table></td><td style="padding:0 0 0 10px;vertical-align:top;width:25%;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;background:#ffffff;border:1px solid #dbe4f0;"><tr><td style="padding:14px 16px;font-size:14px;font-weight:800;color:#0f172a;background:#f8fafc;border-bottom:1px solid #e5e7eb;">Risk Flags</td></tr><tr><td style="padding:14px 16px 8px 16px;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;">${buildExcelBulletRows(model.intelligence.risk_flags,'No major risks were surfaced.')}</table></td></tr></table></td></tr>
+${sectionSpacer}
+<tr><td colspan="2" style="padding:0 10px 0 0;vertical-align:top;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;background:#ffffff;border:1px solid #dbe4f0;"><tr><td style="padding:14px 16px;font-size:14px;font-weight:800;color:#0f172a;background:#f8fafc;border-bottom:1px solid #e5e7eb;">Next Steps</td></tr><tr><td style="padding:14px 16px 8px 16px;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;">${buildExcelBulletRows(model.intelligence.next_steps,'No next-step guidance available.')}</table></td></tr></table></td><td colspan="2" style="padding:0 0 0 10px;vertical-align:top;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;background:#ffffff;border:1px solid #dbe4f0;"><tr><td style="padding:14px 16px;font-size:14px;font-weight:800;color:#0f172a;background:#f8fafc;border-bottom:1px solid #e5e7eb;">Interview Questions</td></tr><tr><td style="padding:14px 16px 8px 16px;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;">${buildExcelBulletRows(model.intelligence.interview_questions,'No interview prompts were generated.')}</table></td></tr></table></td></tr>
+${sectionSpacer}
+<tr><td colspan="2" style="padding:0 10px 0 0;vertical-align:top;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;background:#ffffff;border:1px solid #dbe4f0;"><tr><td colspan="2" style="padding:14px 16px;font-size:14px;font-weight:800;color:#0f172a;background:#f8fafc;border-bottom:1px solid #e5e7eb;">Direct Profiles & Suggested Keywords</td></tr><tr><td colspan="2" style="padding:10px 16px 6px 16px;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#64748b;">Direct Profile Links</td></tr><tr><td colspan="2" style="padding:0 16px 14px 16px;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;">${directProfileRows}</table></td></tr><tr><td colspan="2" style="padding:0 16px 6px 16px;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#64748b;">Suggested Keywords</td></tr><tr><td colspan="2" style="padding:0 16px 16px 16px;font-size:12px;line-height:1.7;color:#111827;">${escapeHtml(model.suggestedKeywords.join(', ') || 'No suggested keywords available.')}</td></tr></table></td><td colspan="2" style="padding:0 0 0 10px;vertical-align:top;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;background:#ffffff;border:1px solid #dbe4f0;"><tr><td colspan="4" style="padding:14px 16px;font-size:14px;font-weight:800;color:#0f172a;background:#f8fafc;border-bottom:1px solid #e5e7eb;">OSINT Summary</td></tr><tr><td style="padding:12px 16px;font-size:11px;font-weight:700;text-transform:uppercase;color:#64748b;border-bottom:1px solid #e5e7eb;">Status</td><td style="padding:12px 16px;font-size:11px;font-weight:700;text-transform:uppercase;color:#64748b;border-bottom:1px solid #e5e7eb;">Confidence</td><td style="padding:12px 16px;font-size:11px;font-weight:700;text-transform:uppercase;color:#64748b;border-bottom:1px solid #e5e7eb;">Matched Platforms</td><td style="padding:12px 16px;font-size:11px;font-weight:700;text-transform:uppercase;color:#64748b;border-bottom:1px solid #e5e7eb;">Top Links</td></tr><tr><td style="padding:0 16px 12px 16px;font-size:12px;color:#111827;border-bottom:1px solid #e5e7eb;">${escapeHtml(model.osintSummary.status || 'Unavailable')}</td><td style="padding:0 16px 12px 16px;font-size:12px;color:#111827;border-bottom:1px solid #e5e7eb;">${escapeHtml(model.osintSummary.confidence || 'Unavailable')}</td><td style="padding:0 16px 12px 16px;font-size:12px;color:#111827;border-bottom:1px solid #e5e7eb;">${escapeHtml(String(model.osintSummary.matched_platforms ?? 0))}</td><td style="padding:0 16px 12px 16px;font-size:12px;color:#111827;border-bottom:1px solid #e5e7eb;">${escapeHtml(String(model.osintSummary.top_results ?? 0))}</td></tr><tr><td colspan="4" style="padding:14px 16px 6px 16px;font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#64748b;">Top OSINT Links</td></tr><tr><td colspan="4" style="padding:0 16px 16px 16px;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;">${osintRows}</table></td></tr></table></td></tr>
+${sectionSpacer}
+<tr><td colspan="4" style="padding:0;vertical-align:top;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;background:#ffffff;border:1px solid #dbe4f0;"><tr><td style="padding:14px 16px;font-size:14px;font-weight:800;color:#0f172a;background:#f8fafc;border-bottom:1px solid #e5e7eb;">Active Job Description</td></tr><tr><td style="padding:16px;font-size:12px;line-height:1.8;color:#334155;">${jdHtml}</td></tr></table></td></tr>
+${sectionSpacer}
+<tr><td colspan="4" style="padding:0;vertical-align:top;"><table cellpadding="0" cellspacing="0" border="0" style="width:100%;border-collapse:collapse;background:#ffffff;border:1px solid #dbe4f0;"><tr><td style="padding:14px 16px;font-size:14px;font-weight:800;color:#0f172a;background:#f8fafc;border-bottom:1px solid #e5e7eb;">Resume Source Text</td></tr><tr><td style="padding:16px;font-size:12px;line-height:1.8;color:#334155;">${resumeTextHtml}</td></tr></table></td></tr>
+</table></td></tr></table></body></html>`;
+        return {html:fileSafeHtml(html), fileName:`${safeFileName}_Report.xls`};
+    }
+    window.downloadExcelReport = async function(){
+        if(!window.currentCandidateData) return cyberAlert("No report to export.", true);
+        try{
+            const candidateData=window.currentCandidateData;
+            const ext=candidateData.extracted_data || {};
+            const location=normalizeCandidateLocation(ext.location) || 'Unknown';
+            const osintBundle=await fetchCandidateOsintBundleForExport(candidateData, location);
+            const model=buildCandidateExcelModel(candidateData, osintBundle);
+            const payload=buildCandidateExcelHtml(model);
+            const blob=new Blob([payload.html], {type:'application/vnd.ms-excel;charset=utf-8;'});
+            const url=URL.createObjectURL(blob);
+            const link=document.createElement('a');
+            link.href=url;
+            link.download=payload.fileName;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            setTimeout(()=>URL.revokeObjectURL(url), 1000);
+            showToast('Excel report exported.', 'success');
+        }catch(err){
+            console.error('Excel export failed:', err);
+            cyberAlert("Error: Could not build the Excel report.", true);
+        }
     };
 
     // â”€â”€ DB leaderboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
